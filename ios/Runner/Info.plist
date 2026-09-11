@@ -1,0 +1,47 @@
+<key>NSCameraUsageDescription</key>
+<string>Mobile TV Studio needs the camera to broadcast live video.</string>
+
+<key>NSMicrophoneUsageDescription</key>
+<string>Mobile TV Studio needs the microphone for live audio.</string>
+
+<key>NSBluetoothAlwaysUsageDescription</key>
+<string>Mobile TV Studio uses Bluetooth to find and control nearby devices.</string>
+
+<key>NSBluetoothPeripheralUsageDescription</key>
+<string>Mobile TV Studio uses Bluetooth for device control.</string>
+
+<key>NSLocalNetworkUsageDescription</key>
+<string>Mobile TV Studio needs local network access to find cameras on your Wi-Fi.</string>
+
+<key>NSBonjourServices</key>
+<array>
+  <string>_mobiletvstudio._tcp</string>
+  <string>_mobiletvstudio._udp</string>
+</array>
+
+<key>UIBackgroundModes</key>
+<array>
+  <string>audio</string>
+  <string>voip</string>
+  <string>fetch</string>
+</array>
+
+<key>UIRequiresPersistentWiFi</key>
+<true/>
+
+<key>UIViewControllerBasedStatusBarAppearance</key>
+<false/>
+
+<key>UISupportedInterfaceOrientations</key>
+<array>
+  <string>UIInterfaceOrientationLandscapeLeft</string>
+  <string>UIInterfaceOrientationLandscapeRight</string>
+</array>
+
+<key>UISupportedInterfaceOrientations~ipad</key>
+<array>
+  <string>UIInterfaceOrientationLandscapeLeft</string>
+  <string>UIInterfaceOrientationLandscapeRight</string>
+  <string>UIInterfaceOrientationPortrait</string>
+  <string>UIInterfaceOrientationPortraitUpsideDown</string>
+</array>
