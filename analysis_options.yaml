@@ -1,0 +1,30 @@
+include: package:flutter_lints/flutter.yaml
+
+linter:
+  rules:
+    # Safety
+    avoid_print: true
+    prefer_const_constructors: true
+    prefer_const_declarations: true
+    prefer_final_locals: true
+    avoid_unnecessary_containers: true
+    sized_box_for_whitespace: true
+
+    # Readability
+    always_declare_return_types: true
+    annotate_overrides: true
+    avoid_empty_else: true
+    prefer_single_quotes: true
+
+    # Async correctness
+    unawaited_futures: true
+    avoid_void_async: true
+
+analyzer:
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - relay-server/**
+  errors:
+    invalid_annotation_target: ignore
