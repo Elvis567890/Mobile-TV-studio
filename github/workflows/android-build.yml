@@ -22,124 +22,275 @@ jobs:
           publish_to: 'none'
           version: 0.1.0+1
           environment: { sdk: '>=3.4.0 <4.0.0' }
-          dependencies: { flutter: { sdk: flutter } }
-          dev_dependencies: { flutter_test: { sdk: flutter } }
+          dependencies:
+            flutter: { sdk: flutter }
+            shared_preferences: ^2.3.2
+            provider: ^6.1.2
+            uuid: ^4.5.0
+            path_provider: ^2.1.4
+            file_picker: ^8.1.2
+            video_player: ^2.9.1
+            camera: ^0.11.0+2
+            flutter_webrtc: ^0.11.7
+            web_socket_channel: ^3.0.1
+          dev_dependencies:
+            flutter_test: { sdk: flutter }
           flutter: { uses-material-design: true }
           P
           rm -f pubspec.lock
 
-      - name: Write app files
+      - name: Write lib files
         run: |
           rm -rf lib test
-          mkdir -p lib/screens lib/widgets
+          mkdir -p lib/screens lib/widgets lib/models lib/data lib/services
 
           cat > lib/main.dart << 'D'
           import 'package:flutter/material.dart';
           import 'package:flutter/services.dart';
           import 'screens/role_chooser.dart';
-
           void main() async {
             WidgetsFlutterBinding.ensureInitialized();
-            await SystemChrome.setPreferredOrientations([
-              DeviceOrientation.landscapeLeft,
-              DeviceOrientation.landscapeRight,
-            ]);
+            await SystemChrome.setPreferredOrientations([DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
             await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
             runApp(const App());
           }
-
           class App extends StatelessWidget {
             const App({super.key});
             @override
-            Widget build(BuildContext context) {
-              return MaterialApp(
-                debugShowCheckedModeBanner: false,
-                title: 'Mobile TV Studio',
-                theme: ThemeData(
-                  useMaterial3: true,
-                  brightness: Brightness.dark,
-                  scaffoldBackgroundColor: const Color(0xFF0A0A0A),
-                  colorScheme: const ColorScheme.dark(
-                    primary: Color(0xFF3B82F6),
-                    surface: Color(0xFF141414),
-                  ),
-                ),
-                home: const RoleChooser(),
-              );
+            Widget build(BuildContext context) => MaterialApp(
+              debugShowCheckedModeBanner: false, title: 'Mobile TV Studio',
+              theme: ThemeData(useMaterial3: true, brightness: Brightness.dark,
+                scaffoldBackgroundColor: const Color(0xFF0A0A0A),
+                colorScheme: const ColorScheme.dark(primary: Color(0xFF3B82F6), surface: Color(0xFF141414))),
+              home: const RoleChooser());
+          }
+          D
+
+          cat > lib/services/config.dart << 'D'
+          class AppConfig {
+            // Replace this AFTER you deploy the relay to Render.
+            static const String signalingUrl = 'wss://mobile-tv-relay.onrender.com';
+            static const String roomId = 'studio1';
+          }
+          D
+
+          cat > lib/services/signaling.dart << 'D'
+          import 'dart:async';
+          import 'dart:convert';
+          import 'package:web_socket_channel/web_socket_channel.dart';
+          enum SignalType { offer, answer, candidate, join, leave }
+          class SignalMessage {
+            final SignalType type;
+            final String room;
+            final String from;
+            final String sdp;
+            final String mid;
+            final int mline;
+            SignalMessage({required this.type, required this.room, required this.from, this.sdp = '', this.mid = '', this.mline = 0});
+            Map<String, dynamic> toJson() => {'type': type.name, 'room': room, 'from': from, 'sdp': sdp, 'mid': mid, 'mline': mline};
+            factory SignalMessage.fromJson(Map<String, dynamic> j) => SignalMessage(
+              type: SignalType.values.firstWhere((t) => t.name == j['type'], orElse: () => SignalType.candidate),
+              room: j['room'] ?? '', from: j['from'] ?? '', sdp: j['sdp'] ?? '', mid: j['mid'] ?? '', mline: j['mline'] ?? 0);
+          }
+          class SignalingClient {
+            final String serverUrl;
+            final String roomId;
+            final String clientId;
+            SignalingClient({required this.serverUrl, required this.roomId, required this.clientId});
+            WebSocketChannel? _channel;
+            final _controller = StreamController<SignalMessage>.broadcast();
+            Stream<SignalMessage> get messages => _controller.stream;
+            Future<bool> connect() async {
+              try {
+                _channel = WebSocketChannel.connect(Uri.parse(serverUrl));
+                await _channel!.ready;
+                _channel!.stream.listen((raw) {
+                  try { _controller.add(SignalMessage.fromJson(jsonDecode(raw as String))); } catch (_) {}
+                }, onError: (_) {});
+                send(SignalMessage(type: SignalType.join, room: roomId, from: clientId));
+                return true;
+              } catch (_) { return false; }
             }
+            void send(SignalMessage m) { try { _channel?.sink.add(jsonEncode(m.toJson())); } catch (_) {} }
+            Future<void> disconnect() async { send(SignalMessage(type: SignalType.leave, room: roomId, from: clientId)); await _channel?.sink.close(); await _controller.close(); }
+          }
+          D
+
+          cat > lib/services/webrtc_session.dart << 'D'
+          import 'dart:async';
+          import 'package:flutter_webrtc/flutter_webrtc.dart';
+          import 'signaling.dart';
+
+          class WebRtcSession {
+            final String serverUrl;
+            final String roomId;
+            final String clientId;
+            final bool isCaller;
+
+            WebRtcSession({required this.serverUrl, required this.roomId, required this.clientId, required this.isCaller});
+
+            RTCPeerConnection? _pc;
+            MediaStream? _localStream;
+            SignalingClient? _signal;
+            StreamSubscription<SignalMessage>? _sub;
+            final _remote = RTCVideoRenderer();
+            bool _rendererReady = false;
+
+            RTCVideoRenderer get renderer => _remote;
+            MediaStream? get localStream => _localStream;
+            bool get ready => _rendererReady;
+
+            Future<bool> start() async {
+              try {
+                if (!_rendererReady) { await _remote.initialize(); _rendererReady = true; }
+                _pc = await createPeerConnection({
+                  'iceServers': [
+                    {'urls': 'stun:stun.l.google.com:19302'},
+                    {'urls': 'stun:stun1.l.google.com:19302'},
+                  ],
+                  'sdpSemantics': 'unified-plan',
+                });
+                _pc!.onIceCandidate = (c) {
+                  _signal?.send(SignalMessage(type: SignalType.candidate, room: roomId, from: clientId,
+                    sdp: c.candidate ?? '', mid: c.sdpMid ?? '', mline: c.sdpMLineIndex ?? 0));
+                };
+                _pc!.onTrack = (e) {
+                  if (e.streams.isNotEmpty) _remote.srcObject = e.streams[0];
+                };
+                _localStream = await navigator.mediaDevices.getUserMedia({
+                  'audio': true,
+                  'video': {'facingMode': 'environment', 'width': {'ideal': 854}, 'height': {'ideal': 480}},
+                });
+                for (final t in _localStream!.getTracks()) { await _pc!.addTrack(t, _localStream!); }
+                _signal = SignalingClient(serverUrl: serverUrl, roomId: roomId, clientId: clientId);
+                final ok = await _signal!.connect();
+                if (!ok) return false;
+                _sub = _signal!.messages.listen(_onSignal);
+                if (isCaller) {
+                  final offer = await _pc!.createOffer();
+                  await _pc!.setLocalDescription(offer);
+                  _signal!.send(SignalMessage(type: SignalType.offer, room: roomId, from: clientId, sdp: offer.sdp ?? ''));
+                }
+                return true;
+              } catch (_) { return false; }
+            }
+
+            Future<void> _onSignal(SignalMessage m) async {
+              if (m.from == clientId) return;
+              if (m.type == SignalType.offer) {
+                await _pc!.setRemoteDescription(RTCSessionDescription(m.sdp, 'offer'));
+                final answer = await _pc!.createAnswer();
+                await _pc!.setLocalDescription(answer);
+                _signal!.send(SignalMessage(type: SignalType.answer, room: roomId, from: clientId, sdp: answer.sdp ?? ''));
+              } else if (m.type == SignalType.answer) {
+                await _pc!.setRemoteDescription(RTCSessionDescription(m.sdp, 'answer'));
+              } else if (m.type == SignalType.candidate) {
+                await _pc!.addCandidate(RTCIceCandidate(m.sdp, m.mid, m.mline));
+              }
+            }
+
+            Future<void> stop() async {
+              await _sub?.cancel();
+              await _signal?.disconnect();
+              for (final t in _localStream?.getTracks() ?? <MediaStreamTrack>[]) { await t.stop(); }
+              await _localStream?.dispose();
+              await _pc?.close(); await _pc?.dispose();
+              _pc = null; _localStream = null;
+            }
+          }
+          D
+
+          cat > lib/models/overlay_item.dart << 'D'
+          class OverlayItem {
+            final String id;
+            final String text;
+            double x; double y; double size; int color;
+            OverlayItem({required this.id, required this.text, required this.x, required this.y, this.size = 20, this.color = 0xFFFFFFFF});
+            Map<String, dynamic> toJson() => {'id': id, 'text': text, 'x': x, 'y': y, 'size': size, 'color': color};
+            factory OverlayItem.fromJson(Map<String, dynamic> j) => OverlayItem(id: j['id'], text: j['text'], x: (j['x'] as num).toDouble(), y: (j['y'] as num).toDouble(), size: (j['size'] as num).toDouble(), color: j['color']);
+          }
+          D
+
+          cat > lib/data/overlay_store.dart << 'D'
+          import 'dart:convert';
+          import 'package:shared_preferences/shared_preferences.dart';
+          import '../models/overlay_item.dart';
+          class OverlayStore {
+            static const _k = 'overlays_v1';
+            Future<List<OverlayItem>> loadAll() async {
+              final p = await SharedPreferences.getInstance();
+              final raw = p.getString(_k);
+              if (raw == null || raw.isEmpty) return [];
+              try { return (jsonDecode(raw) as List).map((e) => OverlayItem.fromJson(e)).toList(); } catch (_) { return []; }
+            }
+            Future<void> saveAll(List<OverlayItem> items) async {
+              final p = await SharedPreferences.getInstance();
+              await p.setString(_k, jsonEncode(items.map((e) => e.toJson()).toList()));
+            }
+            Future<void> add(OverlayItem item) async { final a = await loadAll(); a.add(item); await saveAll(a); }
+            Future<void> remove(String id) async { final a = await loadAll(); a.removeWhere((e) => e.id == id); await saveAll(a); }
           }
           D
 
           cat > lib/widgets/big_button.dart << 'D'
           import 'package:flutter/material.dart';
-
           class BigButton extends StatelessWidget {
-            final IconData icon;
-            final String label;
-            final Color color;
-            final VoidCallback onTap;
-            final double size;
-            const BigButton({
-              super.key,
-              required this.icon,
-              required this.label,
-              required this.onTap,
-              this.color = const Color(0xFF3B82F6),
-              this.size = 90,
-            });
-            @override
-            Widget build(BuildContext context) {
-              return InkWell(
-                onTap: onTap,
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  width: size, height: size,
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.12),
-                    border: Border.all(color: color, width: 1.5),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(icon, color: color, size: size * 0.32),
-                      const SizedBox(height: 6),
-                      Text(label,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: color, fontSize: 10,
-                          fontWeight: FontWeight.w900, letterSpacing: 1.5)),
-                    ],
-                  ),
-                ),
-              );
-            }
+            final IconData icon; final String label; final Color color; final VoidCallback onTap; final double size;
+            const BigButton({super.key, required this.icon, required this.label, required this.onTap, this.color = const Color(0xFF3B82F6), this.size = 80});
+            @override Widget build(BuildContext context) => InkWell(onTap: onTap, borderRadius: BorderRadius.circular(8),
+              child: Container(width: size, height: size,
+                decoration: BoxDecoration(color: color.withOpacity(0.12), border: Border.all(color: color, width: 1.5), borderRadius: BorderRadius.circular(8)),
+                child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Icon(icon, color: color, size: size * 0.32), const SizedBox(height: 4),
+                  Text(label, textAlign: TextAlign.center, style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1))])));
           }
           D
 
           cat > lib/widgets/status_badge.dart << 'D'
           import 'package:flutter/material.dart';
-
           class StatusBadge extends StatelessWidget {
-            final String label;
-            final Color color;
-            final IconData icon;
+            final String label; final Color color; final IconData icon;
             const StatusBadge({super.key, required this.label, required this.color, this.icon = Icons.circle});
-            @override
-            Widget build(BuildContext context) {
-              return Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.15),
-                  border: Border.all(color: color.withOpacity(0.6)),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(icon, size: 12, color: color),
-                  const SizedBox(width: 6),
-                  Text(label, style: TextStyle(color: color, fontSize: 10,
-                    fontWeight: FontWeight.w800, letterSpacing: 1.2)),
-                ]),
-              );
+            @override Widget build(BuildContext context) => Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(color: color.withOpacity(0.15), border: Border.all(color: color.withOpacity(0.6)), borderRadius: BorderRadius.circular(20)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 12, color: color), const SizedBox(width: 6),
+                Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1.2))]));
+          }
+          D
+
+          cat > lib/widgets/live_camera.dart << 'D'
+          import 'package:camera/camera.dart';
+          import 'package:flutter/material.dart';
+          class LiveCamera extends StatefulWidget {
+            final bool front;
+            const LiveCamera({super.key, this.front = false});
+            @override State<LiveCamera> createState() => _LC();
+          }
+          class _LC extends State<LiveCamera> with WidgetsBindingObserver {
+            CameraController? _ctrl; bool _ready = false; String? _error;
+            @override void initState() { super.initState(); WidgetsBinding.instance.addObserver(this); _init(); }
+            Future<void> _init() async {
+              try {
+                final cams = await availableCameras();
+                if (cams.isEmpty) { setState(() => _error = 'No cameras'); return; }
+                final lens = widget.front ? CameraLensDirection.front : CameraLensDirection.back;
+                final cam = cams.firstWhere((c) => c.lensDirection == lens, orElse: () => cams.first);
+                _ctrl = CameraController(cam, ResolutionPreset.medium, enableAudio: true);
+                await _ctrl!.initialize();
+                if (mounted) setState(() => _ready = true);
+              } catch (e) { if (mounted) setState(() => _error = e.toString()); }
+            }
+            @override void didUpdateWidget(covariant LiveCamera old) { super.didUpdateWidget(old); if (old.front != widget.front) { _ctrl?.dispose(); _ready = false; _init(); } }
+            @override void didChangeAppLifecycleState(AppLifecycleState s) {
+              if (s == AppLifecycleState.inactive) { _ctrl?.dispose(); _ready = false; }
+              else if (s == AppLifecycleState.resumed) { _init(); }
+            }
+            @override void dispose() { WidgetsBinding.instance.removeObserver(this); _ctrl?.dispose(); super.dispose(); }
+            @override Widget build(BuildContext context) {
+              if (_error != null) return Container(color: Colors.black, child: Center(child: Text(_error!, style: const TextStyle(color: Colors.redAccent, fontSize: 11))));
+              if (!_ready || _ctrl == null) return Container(color: Colors.black, child: const Center(child: CircularProgressIndicator(color: Colors.redAccent)));
+              return CameraPreview(_ctrl!);
             }
           }
           D
@@ -148,74 +299,29 @@ jobs:
           import 'package:flutter/material.dart';
           import 'director_screen.dart';
           import 'camera_screen.dart';
-
           class RoleChooser extends StatelessWidget {
             const RoleChooser({super.key});
-            @override
-            Widget build(BuildContext context) {
-              return Scaffold(
-                body: SafeArea(
-                  child: SingleChildScrollView(
-                    physics: const ClampingScrollPhysics(),
-                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const SizedBox(height: 40),
-                        const Text('MOBILE TV STUDIO',
-                          style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: 4)),
-                        const SizedBox(height: 8),
-                        const Text('What is this phone?',
-                          style: TextStyle(fontSize: 14, color: Colors.white54)),
-                        const SizedBox(height: 32),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            _card(context, Icons.videocam, 'CAMERA', 'Send live video', const Color(0xFFEF4444), () {
-                              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CameraScreen()));
-                            }),
-                            const SizedBox(width: 20),
-                            _card(context, Icons.dashboard, 'DIRECTOR', 'Control broadcast', const Color(0xFF3B82F6), () {
-                              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DirectorScreen()));
-                            }),
-                            const SizedBox(width: 20),
-                            _card(context, Icons.all_inclusive, 'BOTH', 'Send and control', const Color(0xFF8B5CF6), () {
-                              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DirectorScreen()));
-                            }),
-                          ],
-                        ),
-                        const SizedBox(height: 40),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            }
-
-            Widget _card(BuildContext context, IconData icon, String title, String sub, Color color, VoidCallback onTap) {
-              return InkWell(
-                onTap: onTap,
-                borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  width: 160, height: 180,
-                  decoration: BoxDecoration(
-                    color: Colors.white10,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: color.withOpacity(0.5), width: 2),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(icon, size: 48, color: color),
-                      const SizedBox(height: 12),
-                      Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: 2)),
-                      const SizedBox(height: 6),
-                      Text(sub, style: const TextStyle(color: Colors.white54, fontSize: 10)),
-                    ],
-                  ),
-                ),
-              );
-            }
+            @override Widget build(BuildContext context) => Scaffold(body: SafeArea(child: SingleChildScrollView(
+              physics: const ClampingScrollPhysics(), padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              child: Column(children: [
+                const SizedBox(height: 20),
+                const Text('MOBILE TV STUDIO', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: 4)),
+                const SizedBox(height: 4),
+                const Text('What is this phone?', style: TextStyle(fontSize: 12, color: Colors.white54)),
+                const SizedBox(height: 20),
+                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  _card(context, Icons.videocam, 'CAMERA', const Color(0xFFEF4444), () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CameraScreen()))),
+                  const SizedBox(width: 16),
+                  _card(context, Icons.dashboard, 'DIRECTOR', const Color(0xFF3B82F6), () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DirectorScreen()))),
+                  const SizedBox(width: 16),
+                  _card(context, Icons.all_inclusive, 'BOTH', const Color(0xFF8B5CF6), () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DirectorScreen()))),
+                ]),
+              ]))));
+            Widget _card(BuildContext context, IconData icon, String t, Color c, VoidCallback onTap) => InkWell(onTap: onTap, borderRadius: BorderRadius.circular(12),
+              child: Container(width: 140, height: 150,
+                decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(12), border: Border.all(color: c.withOpacity(0.5), width: 2)),
+                child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon, size: 44, color: c), const SizedBox(height: 10),
+                  Text(t, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 2))])));
           }
           D
 
@@ -223,696 +329,339 @@ jobs:
           import 'package:flutter/material.dart';
           import '../widgets/big_button.dart';
           import '../widgets/status_badge.dart';
-
+          import '../widgets/live_camera.dart';
+          import '../services/webrtc_session.dart';
+          import '../services/config.dart';
           class CameraScreen extends StatefulWidget {
             const CameraScreen({super.key});
-            @override
-            State<CameraScreen> createState() => _CameraScreenState();
+            @override State<CameraScreen> createState() => _CS();
           }
+          class _CS extends State<CameraScreen> {
+            bool _live = false; bool _front = false; String _quality = '720p'; int _fps = 30; String _status = 'OFFLINE';
+            WebRtcSession? _session;
+            void _cycleQ() => setState(() => _quality = _quality == '720p' ? '480p' : _quality == '480p' ? '360p' : '720p');
+            void _cycleFps() => setState(() { const o = [24, 25, 30, 35, 60]; _fps = o[(o.indexOf(_fps) + 1) % o.length]; });
 
-          class _CameraScreenState extends State<CameraScreen> {
-            bool _live = false;
-            String _quality = '720p';
-            int _fps = 30;
-            bool _front = false;
-
-            void _cycleQ() => setState(() {
-              _quality = _quality == '720p' ? '480p' : _quality == '480p' ? '360p' : '720p';
-            });
-            void _cycleFps() => setState(() {
-              const opts = [24, 25, 30, 35, 60];
-              _fps = opts[(opts.indexOf(_fps) + 1) % opts.length];
-            });
-
-            @override
-            Widget build(BuildContext context) {
-              return Scaffold(
-                appBar: AppBar(
-                  title: const Text('CAMERA NODE',
-                    style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)),
-                  backgroundColor: const Color(0xFF141414),
-                  actions: [
-                    Padding(
-                      padding: const EdgeInsets.only(right: 12),
-                      child: Center(
-                        child: StatusBadge(
-                          label: '$_quality • ${_fps}fps • ${_live ? "WIFI" : "OFFLINE"}',
-                          color: _live ? const Color(0xFF22C55E) : Colors.grey,
-                          icon: _live ? Icons.wifi : Icons.cloud_off,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                body: Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        margin: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.black,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: _live ? const Color(0xFFEF4444) : Colors.white12, width: _live ? 3 : 1),
-                        ),
-                        child: Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(_live ? Icons.videocam : Icons.videocam_off,
-                                size: 64, color: _live ? const Color(0xFFEF4444) : Colors.white24),
-                              const SizedBox(height: 12),
-                              Text(_live ? 'PREVIEW LIVE' : 'CAMERA IDLE',
-                                style: TextStyle(color: _live ? const Color(0xFFEF4444) : Colors.white38,
-                                  fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 3)),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    Container(
-                      width: 180,
-                      color: const Color(0xFF141414),
-                      padding: const EdgeInsets.all(10),
-                      child: SingleChildScrollView(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            BigButton(icon: _live ? Icons.stop : Icons.play_arrow,
-                              label: _live ? 'STOP' : 'GO LIVE',
-                              color: _live ? const Color(0xFFEF4444) : const Color(0xFF22C55E),
-                              size: 88,
-                              onTap: () => setState(() => _live = !_live)),
-                            const SizedBox(height: 12),
-                            BigButton(icon: Icons.high_quality, label: _quality,
-                              onTap: _cycleQ, size: 72),
-                            const SizedBox(height: 12),
-                            BigButton(icon: Icons.speed, label: '$_fps FPS',
-                              color: Colors.tealAccent, onTap: _cycleFps, size: 72),
-                            const SizedBox(height: 12),
-                            BigButton(icon: Icons.flip_camera_android,
-                              label: _front ? 'FRONT' : 'REAR',
-                              color: const Color(0xFF8B5CF6), size: 72,
-                              onTap: () => setState(() => _front = !_front)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              );
+            Future<void> _toggle() async {
+              if (_live) {
+                await _session?.stop();
+                setState(() { _live = false; _status = 'OFFLINE'; });
+              } else {
+                setState(() => _status = 'CONNECTING…');
+                final s = WebRtcSession(
+                  serverUrl: AppConfig.signalingUrl,
+                  roomId: AppConfig.roomId,
+                  clientId: 'cam_${DateTime.now().millisecondsSinceEpoch}',
+                  isCaller: true);
+                final ok = await s.start();
+                if (ok) {
+                  _session = s;
+                  setState(() { _live = true; _status = 'LIVE'; });
+                } else {
+                  setState(() => _status = 'RELAY OFFLINE');
+                }
+              }
             }
+
+            @override void dispose() { _session?.stop(); super.dispose(); }
+
+            @override Widget build(BuildContext context) => Scaffold(
+              appBar: AppBar(title: const Text('CAMERA NODE', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)),
+                backgroundColor: const Color(0xFF141414),
+                actions: [Padding(padding: const EdgeInsets.only(right: 12), child: Center(child: StatusBadge(
+                  label: '$_quality • ${_fps}fps • $_status',
+                  color: _live ? const Color(0xFF22C55E) : (_status == 'CONNECTING…' ? Colors.orangeAccent : Colors.grey),
+                  icon: _live ? Icons.wifi : Icons.cloud_off)))]),
+              body: Row(children: [
+                Expanded(child: Container(margin: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: _live ? const Color(0xFFEF4444) : Colors.white24, width: _live ? 3 : 1)),
+                  child: ClipRRect(borderRadius: BorderRadius.circular(6), child: LiveCamera(front: _front)))),
+                Container(width: 160, color: const Color(0xFF141414), padding: const EdgeInsets.all(8),
+                  child: SingleChildScrollView(child: Column(children: [
+                    BigButton(icon: _live ? Icons.stop : Icons.play_arrow, label: _live ? 'STOP' : 'GO LIVE',
+                      color: _live ? const Color(0xFFEF4444) : const Color(0xFF22C55E), size: 78, onTap: _toggle),
+                    const SizedBox(height: 8),
+                    BigButton(icon: Icons.high_quality, label: _quality, onTap: _cycleQ, size: 64),
+                    const SizedBox(height: 8),
+                    BigButton(icon: Icons.speed, label: '$_fps FPS', color: Colors.tealAccent, onTap: _cycleFps, size: 64),
+                    const SizedBox(height: 8),
+                    BigButton(icon: Icons.flip_camera_android, label: _front ? 'FRONT' : 'REAR',
+                      color: const Color(0xFF8B5CF6), size: 64, onTap: () => setState(() => _front = !_front)),
+                  ]))),
+              ]));
+          }
+          D
+
+          cat > lib/screens/graphics_editor.dart << 'D'
+          import 'package:flutter/material.dart';
+          import 'package:uuid/uuid.dart';
+          import '../models/overlay_item.dart';
+          import '../data/overlay_store.dart';
+          class GraphicsEditor extends StatefulWidget {
+            const GraphicsEditor({super.key});
+            @override State<GraphicsEditor> createState() => _GE();
+          }
+          class _GE extends State<GraphicsEditor> {
+            final _store = OverlayStore(); List<OverlayItem> _items = []; String? _sel;
+            @override void initState() { super.initState(); _load(); }
+            Future<void> _load() async { _items = await _store.loadAll(); if (mounted) setState(() {}); }
+            Future<void> _addText() async {
+              final ctrl = TextEditingController();
+              final t = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(
+                backgroundColor: const Color(0xFF141414), title: const Text('Add Text'),
+                content: TextField(controller: ctrl, autofocus: true, style: const TextStyle(color: Colors.white)),
+                actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('CANCEL')),
+                  FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('ADD'))]));
+              if (t == null || t.isEmpty) return;
+              await _store.add(OverlayItem(id: const Uuid().v4(), text: t, x: 0.5, y: 0.5));
+              await _load();
+            }
+            void _move(Offset d, Size box) { final s = _items.firstWhere((e) => e.id == _sel);
+              setState(() { s.x = (s.x + d.dx / box.width).clamp(0.0, 1.0); s.y = (s.y + d.dy / box.height).clamp(0.0, 1.0); }); }
+            @override Widget build(BuildContext context) => Scaffold(
+              appBar: AppBar(title: const Text('GRAPHICS', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)),
+                backgroundColor: const Color(0xFF141414),
+                actions: [TextButton.icon(onPressed: _addText, icon: const Icon(Icons.text_fields), label: const Text('ADD TEXT'))]),
+              body: Column(children: [
+                Expanded(flex: 3, child: Padding(padding: const EdgeInsets.all(12),
+                  child: LayoutBuilder(builder: (context, cons) {
+                    final box = Size(cons.maxWidth, cons.maxHeight);
+                    return GestureDetector(onPanUpdate: (d) => _sel != null ? _move(d.delta, box) : null,
+                      child: Container(decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0xFFF5C542), width: 1.5)),
+                        child: Stack(children: [
+                          const Center(child: Text('DRAG TEXT TO MOVE', style: TextStyle(color: Colors.white24, fontSize: 10, letterSpacing: 3))),
+                          ..._items.map((it) => Positioned(left: it.x * box.width - 60, top: it.y * box.height - 14,
+                            child: GestureDetector(onTap: () => setState(() => _sel = it.id),
+                              child: Container(padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(border: Border.all(color: _sel == it.id ? const Color(0xFF3B82F6) : Colors.transparent, width: 2)),
+                                child: Text(it.text, style: TextStyle(color: Color(it.color), fontSize: it.size, fontWeight: FontWeight.w900, letterSpacing: 1)))))),
+                        ])));
+                  }))),
+                Expanded(flex: 2, child: Container(color: const Color(0xFF141414),
+                  child: _items.isEmpty ? const Center(child: Text('No overlays. Tap ADD TEXT.', style: TextStyle(color: Colors.white54, fontSize: 12)))
+                    : ListView.builder(itemCount: _items.length, itemBuilder: (_, i) { final it = _items[i];
+                        return ListTile(selected: _sel == it.id, selectedTileColor: Colors.white10,
+                          leading: const Icon(Icons.text_fields, color: Colors.white70),
+                          title: Text(it.text, style: const TextStyle(color: Colors.white)),
+                          subtitle: Text('size ${it.size.toInt()}', style: const TextStyle(color: Colors.white54, fontSize: 10)),
+                          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                            IconButton(icon: const Icon(Icons.remove_circle_outline, color: Colors.white70), onPressed: () => setState(() => it.size = (it.size - 4).clamp(8.0, 72.0))),
+                            IconButton(icon: const Icon(Icons.add_circle_outline, color: Colors.white70), onPressed: () => setState(() => it.size = (it.size + 4).clamp(8.0, 72.0))),
+                            IconButton(icon: const Icon(Icons.delete_outline, color: Colors.redAccent), onPressed: () async { await _store.remove(it.id); await _load(); })]),
+                          onTap: () => setState(() => _sel = it.id)); })),
+                ),
+                Container(height: 50, color: const Color(0xFF0A0A0A), padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Row(children: [
+                    FilledButton.icon(onPressed: () async { await _store.saveAll(_items); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved'))); }, icon: const Icon(Icons.save), label: const Text('SAVE')),
+                    const Spacer(),
+                    FilledButton.icon(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.check), label: const Text('DONE'))])),
+              ]));
+          }
+          D
+
+          cat > lib/screens/placeholder_screen.dart << 'D'
+          import 'package:flutter/material.dart';
+          class PlaceholderScreen extends StatelessWidget {
+            final String title; final IconData icon;
+            const PlaceholderScreen({super.key, required this.title, this.icon = Icons.construction});
+            @override Widget build(BuildContext context) => Scaffold(
+              appBar: AppBar(title: Text(title, style: const TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)), backgroundColor: const Color(0xFF141414)),
+              body: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon(icon, size: 64, color: Colors.white24), const SizedBox(height: 16),
+                Text(title.toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 3)),
+                const SizedBox(height: 8),
+                const Text('Coming in a later build.', style: TextStyle(color: Colors.white54, fontSize: 12))])));
           }
           D
 
           cat > lib/screens/director_screen.dart << 'D'
           import 'dart:async';
           import 'package:flutter/material.dart';
+          import 'graphics_editor.dart';
+          import 'placeholder_screen.dart';
+          import '../services/webrtc_session.dart';
+          import '../services/config.dart';
 
-          const _bg = Color(0xFF0A0A0A);
-          const _panel = Color(0xFF141414);
-          const _border = Color(0x14FFFFFF);
-          const _red = Color(0xFFEF4444);
-          const _green = Color(0xFF22C55E);
-          const _yellow = Color(0xFFF5C542);
-          const _blue = Color(0xFF3B82F6);
-          const _textMid = Color(0x99FFFFFF);
+          const _bg = Color(0xFF0A0A0A); const _panel = Color(0xFF141414); const _border = Color(0x14FFFFFF);
+          const _red = Color(0xFFEF4444); const _green = Color(0xFF22C55E); const _yellow = Color(0xFFF5C542);
+          const _blue = Color(0xFF3B82F6); const _textMid = Color(0x99FFFFFF);
 
           class DirectorScreen extends StatefulWidget {
             const DirectorScreen({super.key});
-            @override
-            State<DirectorScreen> createState() => _DirectorState();
+            @override State<DirectorScreen> createState() => _DS();
           }
+          class _Cam { final String name; bool live; bool preview; _Cam(this.name, {this.live = false, this.preview = false}); }
 
-          class _Cam {
-            final String name;
-            bool live;
-            bool preview;
-            _Cam(this.name, {this.live = false, this.preview = false});
-          }
-
-          class _DirectorState extends State<DirectorScreen> {
-            bool _onAir = true;
-            bool _menu = false;
-            int _tabIndex = 0;
-            int _sec = 208;
-            Timer? _ticker;
-
-            final _cams = [
-              _Cam('CAM 1', live: true),
-              _Cam('CAM 2', preview: true),
-              _Cam('CAM 3'),
-              _Cam('CAM 4'),
-              _Cam('CAM 5'),
-              _Cam('CAM 6'),
-            ];
+          class _DS extends State<DirectorScreen> {
+            bool _onAir = true; bool _menu = false; int _tabIndex = 0; int _sec = 0; Timer? _ticker;
+            final _cams = [_Cam('CAM 1', live: true), _Cam('CAM 2', preview: true), _Cam('CAM 3'), _Cam('CAM 4'), _Cam('CAM 5'), _Cam('CAM 6')];
             final _vols = [0.7, 0.8, 0.6, 0.9, 0.5, 0.7];
             final _inputs = ['MIC', 'USB', 'BT', 'WIRED', 'MIC', 'USB'];
             final _mutes = List<bool>.filled(6, false);
+            WebRtcSession? _session; String _connStatus = 'OFFLINE';
 
-            @override
-            void initState() {
-              super.initState();
-              _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-                if (mounted) setState(() => _sec++);
-              });
+            @override void initState() { super.initState(); _ticker = Timer.periodic(const Duration(seconds: 1), (_) { if (mounted) setState(() => _sec++); }); _connect(); }
+            @override void dispose() { _ticker?.cancel(); _session?.stop(); super.dispose(); }
+
+            Future<void> _connect() async {
+              setState(() => _connStatus = 'CONNECTING…');
+              final s = WebRtcSession(
+                serverUrl: AppConfig.signalingUrl, roomId: AppConfig.roomId,
+                clientId: 'dir_${DateTime.now().millisecondsSinceEpoch}', isCaller: false);
+              final ok = await s.start();
+              if (ok) { _session = s; setState(() => _connStatus = 'CONNECTED'); }
+              else { setState(() => _connStatus = 'RELAY OFFLINE'); }
             }
 
-            @override
-            void dispose() {
-              _ticker?.cancel();
-              super.dispose();
-            }
-
-            String get _time {
-              final h = (_sec ~/ 3600).toString().padLeft(2, '0');
-              final m = ((_sec ~/ 60) % 60).toString().padLeft(2, '0');
-              final s = (_sec % 60).toString().padLeft(2, '0');
-              return '$h:$m:$s';
-            }
-
+            String get _time { final h = (_sec ~/ 3600).toString().padLeft(2, '0'); final m = ((_sec ~/ 60) % 60).toString().padLeft(2, '0'); final s = (_sec % 60).toString().padLeft(2, '0'); return '$h:$m:$s'; }
             String get _live => _cams.firstWhere((c) => c.live, orElse: () => _cams[0]).name;
             String get _prev => _cams.firstWhere((c) => c.preview, orElse: () => _cams[1]).name;
+            void _take() => setState(() { final l = _cams.indexWhere((c) => c.live); final p = _cams.indexWhere((c) => c.preview); if (l >= 0 && p >= 0) { _cams[l].live = false; _cams[l].preview = true; _cams[p].preview = false; _cams[p].live = true; } });
+            void _open(Widget s) { setState(() => _menu = false); Navigator.of(context).push(MaterialPageRoute(builder: (_) => s)); }
 
-            void _take() => setState(() {
-              final l = _cams.indexWhere((c) => c.live);
-              final p = _cams.indexWhere((c) => c.preview);
-              if (l >= 0 && p >= 0) {
-                _cams[l].live = false;
-                _cams[l].preview = true;
-                _cams[p].preview = false;
-                _cams[p].live = true;
-              }
-            });
+            @override Widget build(BuildContext context) => Scaffold(backgroundColor: _bg,
+              body: SafeArea(child: Stack(children: [
+                Column(children: [_statusBar(), _camStrip(), _tabRow(), Expanded(child: _center()), _audio(), _actionBar()]),
+                if (_menu) _menuPanel()])));
 
-            @override
-            Widget build(BuildContext context) {
-              return Scaffold(
-                backgroundColor: _bg,
-                body: SafeArea(
-                  child: Stack(children: [
-                    Column(children: [
-                      _statusBar(),
-                      _camStrip(),
-                      _tabRow(),
-                      Expanded(child: _center()),
-                      _audio(),
-                      _actionBar(),
-                    ]),
-                    if (_menu) _menuPanel(),
-                  ]),
-                ),
-              );
-            }
-
-            Widget _statusBar() => Container(
-              height: 48,
-              color: _bg,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+            Widget _statusBar() => Container(height: 40, color: _bg, padding: const EdgeInsets.symmetric(horizontal: 10),
               child: Row(children: [
-                Container(width: 8, height: 8, decoration: BoxDecoration(
-                  color: _onAir ? _red : _textMid, shape: BoxShape.circle)),
-                const SizedBox(width: 8),
-                Text(_onAir ? 'ON AIR' : 'OFFLINE',
-                  style: TextStyle(color: _onAir ? _red : _textMid,
-                    fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 2)),
-                const SizedBox(width: 12),
-                Container(width: 1, height: 20, color: _border),
-                const SizedBox(width: 12),
-                const Icon(Icons.videocam, color: Colors.white, size: 14),
-                const SizedBox(width: 5),
-                Text(_live, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
-                const SizedBox(width: 2),
-                const Icon(Icons.keyboard_arrow_down, color: Colors.white, size: 14),
-                const SizedBox(width: 12),
-                const Text('720p  30 FPS', style: TextStyle(color: _textMid, fontSize: 10, letterSpacing: 1)),
+                Container(width: 7, height: 7, decoration: BoxDecoration(color: _onAir ? _red : _textMid, shape: BoxShape.circle)), const SizedBox(width: 6),
+                Text(_onAir ? 'ON AIR' : 'OFFLINE', style: TextStyle(color: _onAir ? _red : _textMid, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 2)),
+                const SizedBox(width: 10), Container(width: 1, height: 16, color: _border), const SizedBox(width: 10),
+                const Icon(Icons.videocam, color: Colors.white, size: 12), const SizedBox(width: 4),
+                Text(_live, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)), const SizedBox(width: 8),
+                Text(_connStatus, style: TextStyle(color: _connStatus == 'CONNECTED' ? _green : Colors.orangeAccent, fontSize: 9, letterSpacing: 1)),
                 const Spacer(),
-                const Icon(Icons.access_time, color: Colors.white, size: 13),
-                const SizedBox(width: 5),
-                Text(_time, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
-                const SizedBox(width: 14),
-                const Icon(Icons.sd_storage, color: Colors.white, size: 13),
-                const SizedBox(width: 5),
-                const Text('24 MB', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
-                const SizedBox(width: 14),
-                const Icon(Icons.wifi, color: _green, size: 14),
-                const SizedBox(width: 12),
-                GestureDetector(
-                  onTap: () => setState(() => _menu = !_menu),
-                  child: const Icon(Icons.menu, color: Colors.white, size: 20)),
-              ]),
-            );
+                const Icon(Icons.access_time, color: Colors.white, size: 11), const SizedBox(width: 4),
+                Text(_time, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)), const SizedBox(width: 10),
+                Icon(_connStatus == 'CONNECTED' ? Icons.wifi : Icons.cloud_off, color: _connStatus == 'CONNECTED' ? _green : Colors.grey, size: 12), const SizedBox(width: 10),
+                GestureDetector(onTap: () => setState(() => _menu = !_menu), child: const Icon(Icons.menu, color: Colors.white, size: 18))]));
 
-            Widget _camStrip() {
-              final items = <Widget>[];
-              for (var i = 0; i < _cams.length; i++) {
-                items.add(Expanded(child: _camTile(_cams[i])));
-              }
-              items.add(Expanded(child: _addTile()));
-              return Container(
-                height: 88,
-                color: _bg,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Row(children: items),
-              );
-            }
-
+            Widget _camStrip() { final items = <Widget>[]; for (final c in _cams) items.add(Expanded(child: _camTile(c))); items.add(Expanded(child: _addTile())); return Container(height: 64, color: _bg, padding: const EdgeInsets.symmetric(horizontal: 10), child: Row(children: items)); }
             Widget _camTile(_Cam c) {
-              final b = c.live ? _red : c.preview ? _yellow : _border;
-              final bw = (c.live || c.preview) ? 2.0 : 1.0;
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 3),
-                child: GestureDetector(
-                  onTap: () => setState(() {
-                    for (final x in _cams) x.preview = false;
-                    c.preview = true;
-                  }),
-                  onDoubleTap: () => setState(() {
-                    for (final x in _cams) {
-                      x.live = false;
-                      x.preview = false;
-                    }
-                    c.live = true;
-                  }),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.black,
-                      border: Border.all(color: b, width: bw),
-                      borderRadius: BorderRadius.circular(4)),
+              final b = c.live ? _red : c.preview ? _yellow : _border; final bw = (c.live || c.preview) ? 2.0 : 1.0;
+              return Padding(padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: GestureDetector(onTap: () => setState(() { for (final x in _cams) x.preview = false; c.preview = true; }),
+                  onDoubleTap: () => setState(() { for (final x in _cams) { x.live = false; x.preview = false; } c.live = true; }),
+                  child: Container(decoration: BoxDecoration(color: Colors.black, border: Border.all(color: b, width: bw), borderRadius: BorderRadius.circular(3)),
                     child: Stack(children: [
-                      Positioned(
-                        top: 5, left: 5,
-                        child: Container(
-                          width: 6, height: 6,
-                          decoration: BoxDecoration(
-                            color: c.live ? _red : c.preview ? _yellow : _textMid,
-                            shape: BoxShape.circle))),
-                      if (c.live)
-                        Positioned(
-                          top: 5, right: 5,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                            decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(2)),
-                            child: const Text('LIVE',
-                              style: TextStyle(color: Colors.white, fontSize: 7,
-                                fontWeight: FontWeight.w900, letterSpacing: 1)))),
-                      Positioned(
-                        left: 5, bottom: 5,
-                        child: Text(c.name,
-                          style: const TextStyle(color: Colors.white, fontSize: 8,
-                            fontWeight: FontWeight.w900, letterSpacing: 1))),
-                    ]),
-                  ),
-                ),
-              );
+                      Positioned(top: 3, left: 3, child: Container(width: 5, height: 5, decoration: BoxDecoration(color: c.live ? _red : c.preview ? _yellow : _textMid, shape: BoxShape.circle))),
+                      if (c.live) Positioned(top: 3, right: 3, child: Container(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(2)),
+                        child: const Text('LIVE', style: TextStyle(color: Colors.white, fontSize: 6, fontWeight: FontWeight.w900, letterSpacing: 1)))),
+                      Positioned(left: 4, bottom: 3, child: Text(c.name, style: const TextStyle(color: Colors.white, fontSize: 7, fontWeight: FontWeight.w900, letterSpacing: 1)))]))));
             }
+            Widget _addTile() => Padding(padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Container(decoration: BoxDecoration(borderRadius: BorderRadius.circular(3), border: Border.all(color: _textMid, width: 1)),
+                child: const Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.add, color: Colors.white70, size: 14), SizedBox(height: 2), Text('Add', style: TextStyle(color: Colors.white70, fontSize: 7))])));
 
-            Widget _addTile() => Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 3),
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: _textMid, width: 1)),
-                child: const Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.add, color: Colors.white70, size: 18),
-                    SizedBox(height: 2),
-                    Text('Add Camera', style: TextStyle(color: Colors.white70, fontSize: 8)),
-                  ]),
-              ),
-            );
+            Widget _tabRow() => Container(height: 24, color: _bg, padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Row(children: [_tabBtn('PROGRAM', 0), const SizedBox(width: 20), _tabBtn('MULTIVIEW', 1)]));
+            Widget _tabBtn(String l, int i) => GestureDetector(onTap: () => setState(() => _tabIndex = i),
+              child: Text(l, style: TextStyle(color: _tabIndex == i ? Colors.white : _textMid, fontSize: 9, fontWeight: _tabIndex == i ? FontWeight.w900 : FontWeight.w600, letterSpacing: 2)));
 
-            Widget _tabRow() => Container(
-              height: 30,
-              color: _bg,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+            Widget _center() => _tabIndex == 1 ? _grid() : _program();
+
+            Widget _program() => Padding(padding: const EdgeInsets.fromLTRB(10, 2, 10, 2),
+              child: Container(decoration: BoxDecoration(color: Colors.black, border: Border.all(color: _yellow, width: 1.5), borderRadius: BorderRadius.circular(4)),
+                child: LayoutBuilder(builder: (context, cons) {
+                  final pW = cons.maxWidth;
+                  final hasRemote = _session != null && _session!.renderer.srcObject != null;
+                  return Stack(children: [
+                    if (hasRemote) Positioned.fill(child: RTCVideoView(_session!.renderer, mirror: false, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover))
+                    else Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      const Icon(Icons.videocam_off, color: Colors.white24, size: 32),
+                      const SizedBox(height: 6),
+                      Text(_connStatus == 'RELAY OFFLINE' ? 'RELAY NOT DEPLOYED YET' : 'WAITING FOR CAMERA',
+                        style: const TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 2))])),
+                    Positioned(top: 6, left: 6, child: Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(2)),
+                      child: const Text('PROGRAM', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1.5)))),
+                    Positioned(right: 8, bottom: 8, width: pW * 0.28, height: pW * 0.28 * 9 / 16,
+                      child: Container(decoration: BoxDecoration(color: Colors.black, border: Border.all(color: _yellow, width: 1.5), borderRadius: BorderRadius.circular(3)),
+                        child: Stack(children: [
+                          Center(child: Text(_prev, style: const TextStyle(color: Colors.white24, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 2))),
+                          Positioned(top: 3, left: 3, child: Container(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(color: _yellow, borderRadius: BorderRadius.circular(2)),
+                            child: const Text('PREVIEW', style: TextStyle(color: Colors.black, fontSize: 6, fontWeight: FontWeight.w900, letterSpacing: 1))))])),
+                  ]);
+                })));
+
+            Widget _grid() => Padding(padding: const EdgeInsets.all(10),
+              child: GridView.builder(itemCount: _cams.length,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, mainAxisSpacing: 6, crossAxisSpacing: 6, childAspectRatio: 16 / 9),
+                itemBuilder: (_, i) { final c = _cams[i]; final b = c.live ? _red : c.preview ? _yellow : _border;
+                  return GestureDetector(onTap: () => setState(() { for (final x in _cams) x.preview = false; c.preview = true; }),
+                    child: Container(decoration: BoxDecoration(color: Colors.black, border: Border.all(color: b, width: 1.5), borderRadius: BorderRadius.circular(3)),
+                      child: Center(child: Text(c.name, style: const TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 2))))); }));
+
+            Widget _audio() => Container(height: 64, color: _bg, padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Row(children: List.generate(6, (i) => Expanded(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: Container(padding: const EdgeInsets.fromLTRB(5, 3, 5, 3),
+                  decoration: BoxDecoration(color: _panel, border: Border.all(color: _border), borderRadius: BorderRadius.circular(3)),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                    Row(children: [Container(width: 4, height: 4, decoration: const BoxDecoration(color: _green, shape: BoxShape.circle)), const SizedBox(width: 3),
+                      Text('CH ${i + 1}', style: const TextStyle(color: Colors.white, fontSize: 7, fontWeight: FontWeight.w900, letterSpacing: 1)), const Spacer(),
+                      Container(padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                        decoration: BoxDecoration(color: _blue.withOpacity(0.20), borderRadius: BorderRadius.circular(2)),
+                        child: Text(_inputs[i], style: const TextStyle(color: _blue, fontSize: 6, fontWeight: FontWeight.w900)))]),
+                    const SizedBox(height: 2),
+                    Expanded(child: Row(children: [
+                      Container(width: 4, decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(2)),
+                        child: Align(alignment: Alignment.bottomCenter, child: FractionallySizedBox(heightFactor: _mutes[i] ? 0.0 : _vols[i],
+                          child: Container(decoration: BoxDecoration(gradient: const LinearGradient(begin: Alignment.bottomCenter, end: Alignment.topCenter, colors: [_green, _yellow]), borderRadius: BorderRadius.circular(2)))))),
+                      const SizedBox(width: 3),
+                      Expanded(child: SliderTheme(data: SliderTheme.of(context).copyWith(trackHeight: 2, activeTrackColor: _textMid, inactiveTrackColor: _border, thumbColor: Colors.white, thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 4), overlayShape: const RoundSliderOverlayShape(overlayRadius: 6)),
+                        child: Slider(value: _mutes[i] ? 0.0 : _vols[i], onChanged: (v) => setState(() => _vols[i] = v))))])),
+                    const SizedBox(height: 2),
+                    Row(children: [
+                      Expanded(child: GestureDetector(onTap: () => setState(() => _mutes[i] = !_mutes[i]),
+                        child: Container(height: 14, decoration: BoxDecoration(color: _mutes[i] ? _red : Colors.black, borderRadius: BorderRadius.circular(2), border: Border.all(color: _border)),
+                          child: Center(child: Text('M', style: TextStyle(color: _mutes[i] ? Colors.white : _textMid, fontSize: 8, fontWeight: FontWeight.w900)))))),
+                      const SizedBox(width: 3),
+                      Expanded(child: Container(height: 14, decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(2), border: Border.all(color: _border)),
+                        child: const Center(child: Text('S', style: TextStyle(color: _textMid, fontSize: 8, fontWeight: FontWeight.w900)))))])]))))));
+
+            Widget _actionBar() => Container(height: 48, color: _bg, padding: const EdgeInsets.symmetric(horizontal: 10),
               child: Row(children: [
-                _tabButton('PROGRAM', 0),
-                const SizedBox(width: 24),
-                _tabButton('MULTIVIEW', 1),
-              ]),
-            );
-
-            Widget _tabButton(String label, int index) => GestureDetector(
-              onTap: () => setState(() => _tabIndex = index),
-              child: Text(label, style: TextStyle(
-                color: _tabIndex == index ? Colors.white : _textMid,
-                fontSize: 10,
-                fontWeight: _tabIndex == index ? FontWeight.w900 : FontWeight.w600,
-                letterSpacing: 2)));
-
-            Widget _center() {
-              if (_tabIndex == 1) return _grid();
-              return _program();
-            }
-
-            Widget _program() => Padding(
-              padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-              child: LayoutBuilder(builder: (context, cons) {
-                final pW = cons.maxWidth;
-                final pH = pW * 9 / 16;
-                final h = pH > cons.maxHeight ? cons.maxHeight : pH;
-                final w = pH > cons.maxHeight ? cons.maxHeight * 16 / 9 : pW;
-                return Center(
-                  child: SizedBox(
-                    width: w, height: h,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.black,
-                        border: Border.all(color: _yellow, width: 1.5),
-                        borderRadius: BorderRadius.circular(4)),
-                      child: Stack(children: [
-                        Center(child: Text(_live,
-                          style: const TextStyle(color: Colors.white24, fontSize: 32,
-                            fontWeight: FontWeight.w900, letterSpacing: 4))),
-                        Positioned(
-                          top: 8, left: 8,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(3)),
-                            child: const Text('PROGRAM',
-                              style: TextStyle(color: Colors.white, fontSize: 9,
-                                fontWeight: FontWeight.w900, letterSpacing: 2)))),
-                        Positioned(
-                          right: 10, bottom: 10,
-                          width: w * 0.30, height: w * 0.30 * 9 / 16,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.black,
-                              border: Border.all(color: _yellow, width: 1.5),
-                              borderRadius: BorderRadius.circular(3)),
-                            child: Stack(children: [
-                              Center(child: Text(_prev,
-                                style: const TextStyle(color: Colors.white24, fontSize: 14,
-                                  fontWeight: FontWeight.w900, letterSpacing: 2))),
-                              Positioned(
-                                top: 5, left: 5,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                                  decoration: BoxDecoration(color: _yellow, borderRadius: BorderRadius.circular(2)),
-                                  child: const Text('PREVIEW',
-                                    style: TextStyle(color: Colors.black, fontSize: 7,
-                                      fontWeight: FontWeight.w900, letterSpacing: 1)))),
-                              Positioned(
-                                left: 5, bottom: 5,
-                                child: Text(_prev,
-                                  style: const TextStyle(color: Colors.white, fontSize: 8,
-                                    fontWeight: FontWeight.w700))),
-                            ]),
-                          )),
-                      ]),
-                    ),
-                  ),
-                );
-              }),
-            );
-
-            Widget _grid() => Padding(
-              padding: const EdgeInsets.all(12),
-              child: GridView.builder(
-                itemCount: _cams.length,
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  mainAxisSpacing: 8,
-                  crossAxisSpacing: 8,
-                  childAspectRatio: 16 / 9),
-                itemBuilder: (_, i) {
-                  final c = _cams[i];
-                  final b = c.live ? _red : c.preview ? _yellow : _border;
-                  return GestureDetector(
-                    onTap: () => setState(() {
-                      for (final x in _cams) x.preview = false;
-                      c.preview = true;
-                    }),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.black,
-                        border: Border.all(color: b, width: 1.5),
-                        borderRadius: BorderRadius.circular(4)),
-                      child: Center(child: Text(c.name,
-                        style: const TextStyle(color: Colors.white70, fontSize: 12,
-                          fontWeight: FontWeight.w800, letterSpacing: 2))),
-                    ),
-                  );
-                },
-              ),
-            );
-
-            Widget _audio() => Container(
-              height: 92,
-              color: _bg,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                children: List.generate(6, (i) => Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 3),
-                    child: Container(
-                      padding: const EdgeInsets.fromLTRB(6, 5, 6, 5),
-                      decoration: BoxDecoration(
-                        color: _panel,
-                        border: Border.all(color: _border),
-                        borderRadius: BorderRadius.circular(4)),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Row(children: [
-                            Container(width: 5, height: 5,
-                              decoration: const BoxDecoration(color: _green, shape: BoxShape.circle)),
-                            const SizedBox(width: 4),
-                            Text('CH ${i + 1}',
-                              style: const TextStyle(color: Colors.white, fontSize: 8,
-                                fontWeight: FontWeight.w900, letterSpacing: 1)),
-                            const Spacer(),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                              decoration: BoxDecoration(
-                                color: _blue.withOpacity(0.20),
-                                borderRadius: BorderRadius.circular(2)),
-                              child: Text(_inputs[i],
-                                style: const TextStyle(color: _blue, fontSize: 7,
-                                  fontWeight: FontWeight.w900))),
-                          ]),
-                          const SizedBox(height: 3),
-                          Expanded(child: Row(children: [
-                            Container(
-                              width: 5,
-                              decoration: BoxDecoration(
-                                color: Colors.black,
-                                borderRadius: BorderRadius.circular(2)),
-                              child: Align(
-                                alignment: Alignment.bottomCenter,
-                                child: FractionallySizedBox(
-                                  heightFactor: _mutes[i] ? 0.0 : _vols[i],
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      gradient: const LinearGradient(
-                                        begin: Alignment.bottomCenter,
-                                        end: Alignment.topCenter,
-                                        colors: [_green, _yellow]),
-                                      borderRadius: BorderRadius.circular(2)))))),
-                            const SizedBox(width: 4),
-                            Expanded(child: SliderTheme(
-                              data: SliderTheme.of(context).copyWith(
-                                trackHeight: 2,
-                                activeTrackColor: _textMid,
-                                inactiveTrackColor: _border,
-                                thumbColor: Colors.white,
-                                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-                                overlayShape: const RoundSliderOverlayShape(overlayRadius: 8)),
-                              child: Slider(
-                                value: _mutes[i] ? 0.0 : _vols[i],
-                                onChanged: (v) => setState(() => _vols[i] = v)))),
-                          ])),
-                          const SizedBox(height: 3),
-                          Row(children: [
-                            Expanded(child: GestureDetector(
-                              onTap: () => setState(() => _mutes[i] = !_mutes[i]),
-                              child: Container(
-                                height: 18,
-                                decoration: BoxDecoration(
-                                  color: _mutes[i] ? _red : Colors.black,
-                                  borderRadius: BorderRadius.circular(3),
-                                  border: Border.all(color: _border)),
-                                child: Center(child: Text('M',
-                                  style: TextStyle(
-                                    color: _mutes[i] ? Colors.white : _textMid,
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.w900)))))),
-                            const SizedBox(width: 4),
-                            Expanded(child: Container(
-                              height: 18,
-                              decoration: BoxDecoration(
-                                color: Colors.black,
-                                borderRadius: BorderRadius.circular(3),
-                                border: Border.all(color: _border)),
-                              child: const Center(child: Text('S',
-                                style: TextStyle(
-                                  color: _textMid,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w900))))),
-                          ]),
-                        ],
-                      ),
-                    ),
-                  ),
-                )),
-              ),
-            );
-
-            Widget _actionBar() => Container(
-              height: 56,
-              color: _bg,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(children: [
-                GestureDetector(
-                  onTap: () => setState(() => _onAir = !_onAir),
-                  child: Container(
-                    height: 40,
-                    padding: const EdgeInsets.symmetric(horizontal: 18),
-                    decoration: BoxDecoration(
-                      color: _onAir ? _red : const Color(0xFF1E293B),
-                      borderRadius: BorderRadius.circular(6)),
-                    child: Row(children: [
-                      Icon(_onAir ? Icons.stop_circle : Icons.podcasts,
-                        color: Colors.white, size: 18),
-                      const SizedBox(width: 8),
-                      Text(_onAir ? 'END STREAM' : 'GO LIVE',
-                        style: const TextStyle(color: Colors.white, fontSize: 12,
-                          fontWeight: FontWeight.w900, letterSpacing: 1.5)),
-                    ]),
-                  ),
-                ),
+                GestureDetector(onTap: () => setState(() => _onAir = !_onAir),
+                  child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 14),
+                    decoration: BoxDecoration(color: _onAir ? _red : const Color(0xFF1E293B), borderRadius: BorderRadius.circular(5)),
+                    child: Row(children: [Icon(_onAir ? Icons.stop_circle : Icons.podcasts, color: Colors.white, size: 16), const SizedBox(width: 6),
+                      Text(_onAir ? 'END STREAM' : 'GO LIVE', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.2))]))),
                 const Spacer(),
-                Container(
-                  height: 40,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  decoration: BoxDecoration(
-                    color: _panel,
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: _border)),
-                  child: Row(children: [
-                    const Icon(Icons.storage, color: Colors.white70, size: 14),
-                    const SizedBox(width: 8),
-                    const Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('DATA BUDGET',
-                          style: TextStyle(color: _textMid, fontSize: 7,
-                            fontWeight: FontWeight.w800, letterSpacing: 1.5)),
-                        Text('24 MB',
-                          style: TextStyle(color: Colors.white, fontSize: 11,
-                            fontWeight: FontWeight.w800)),
-                      ]),
-                    const SizedBox(width: 10),
-                    SizedBox(
-                      width: 50,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(2),
-                        child: const LinearProgressIndicator(
-                          value: 0.24,
-                          minHeight: 4,
-                          backgroundColor: Colors.black,
-                          valueColor: AlwaysStoppedAnimation(_green)))),
-                  ]),
-                ),
-                const SizedBox(width: 10),
-                Container(
-                  height: 40,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  decoration: BoxDecoration(
-                    color: _panel,
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: _border)),
-                  child: const Row(children: [
-                    Icon(Icons.picture_in_picture_alt, color: Colors.white, size: 16),
-                    SizedBox(width: 6),
-                    Text('PiP',
-                      style: TextStyle(color: Colors.white, fontSize: 11,
-                        fontWeight: FontWeight.w700)),
-                  ]),
-                ),
-                const SizedBox(width: 10),
-                GestureDetector(
-                  onTap: _take,
-                  child: Container(
-                    height: 40,
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                    decoration: BoxDecoration(
-                      color: _red,
-                      borderRadius: BorderRadius.circular(6)),
-                    child: const Row(children: [
-                      Icon(Icons.fiber_manual_record, color: Colors.white, size: 12),
-                      SizedBox(width: 8),
-                      Text('TAKE',
-                        style: TextStyle(color: Colors.white, fontSize: 14,
-                          fontWeight: FontWeight.w900, letterSpacing: 3)),
-                    ]),
-                  ),
-                ),
-              ]),
-            );
+                Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(color: _panel, borderRadius: BorderRadius.circular(5), border: Border.all(color: _border)),
+                  child: Row(children: [Icon(Icons.circle, color: _connStatus == 'CONNECTED' ? _green : Colors.grey, size: 8), const SizedBox(width: 6),
+                    Text(_connStatus, style: const TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1))])),
+                const SizedBox(width: 8),
+                GestureDetector(onTap: _take,
+                  child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 20),
+                    decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(5)),
+                    child: const Row(children: [Icon(Icons.fiber_manual_record, color: Colors.white, size: 10), const SizedBox(width: 6),
+                      Text('TAKE', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 2.5))])))]));
 
             Widget _menuPanel() {
               final items = <List<dynamic>>[
-                [Icons.title, 'Titles'],
-                [Icons.layers, 'Graphics'],
-                [Icons.campaign, 'Ads'],
-                [Icons.bookmark_border, 'Templates'],
-                [Icons.monitor_heart, 'Diagnostics'],
-                [Icons.account_circle, 'Accounts'],
-                [Icons.key, 'Stream Targets'],
-                [Icons.schedule, 'Schedule'],
-                [Icons.video_library, 'Recordings'],
-                [Icons.settings, 'Settings'],
-              ];
-              return Positioned(
-                top: 0, right: 0, bottom: 0,
-                child: Container(
-                  width: 240,
-                  color: _bg,
+                [Icons.title, 'Titles'], [Icons.layers, 'Graphics'], [Icons.campaign, 'Ads'],
+                [Icons.bookmark_border, 'Templates'], [Icons.monitor_heart, 'Diagnostics'],
+                [Icons.account_circle, 'Accounts'], [Icons.key, 'Stream Targets'],
+                [Icons.schedule, 'Schedule'], [Icons.video_library, 'Recordings'], [Icons.settings, 'Settings']];
+              return Positioned(top: 0, right: 0, bottom: 0,
+                child: Container(width: 220, color: _bg,
                   child: Column(children: [
-                    Container(
-                      height: 48,
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      decoration: const BoxDecoration(
-                        border: Border(bottom: BorderSide(color: _border))),
-                      child: Row(children: [
-                        const Text('Menu',
-                          style: TextStyle(color: Colors.white, fontSize: 14,
-                            fontWeight: FontWeight.w800)),
-                        const Spacer(),
-                        GestureDetector(
-                          onTap: () => setState(() => _menu = false),
-                          child: const Icon(Icons.close, color: Colors.white, size: 18)),
-                      ])),
-                    Expanded(child: ListView.builder(
-                      itemCount: items.length,
-                      itemBuilder: (_, i) => InkWell(
-                        onTap: () {
-                          setState(() => _menu = false);
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                            content: Text('${items[i][1]} — opens soon'),
-                            duration: const Duration(seconds: 1)));
-                        },
-                        child: SizedBox(
-                          height: 42,
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 14),
-                            child: Row(children: [
-                              Icon(items[i][0] as IconData,
-                                color: Colors.white70, size: 16),
-                              const SizedBox(width: 12),
-                              Text(items[i][1] as String,
-                                style: const TextStyle(color: Colors.white,
-                                  fontSize: 12, fontWeight: FontWeight.w600)),
-                            ]),
-                          )),
-                      ),
-                    )),
-                  ]),
-                ),
-              );
+                    Container(height: 40, padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: _border))),
+                      child: Row(children: [const Text('Menu', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800)), const Spacer(),
+                        GestureDetector(onTap: () => setState(() => _menu = false), child: const Icon(Icons.close, color: Colors.white, size: 16))])),
+                    Expanded(child: ListView.builder(itemCount: items.length, itemBuilder: (_, i) { final it = items[i];
+                      return InkWell(onTap: () { if (it[1] == 'Graphics') { _open(const GraphicsEditor()); }
+                        else { _open(PlaceholderScreen(title: it[1] as String, icon: it[0] as IconData)); } },
+                        child: SizedBox(height: 38, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Row(children: [Icon(it[0] as IconData, color: Colors.white70, size: 14), const SizedBox(width: 10),
+                            Text(it[1] as String, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600))])))); }))]))); 
             }
           }
           D
@@ -931,6 +680,56 @@ jobs:
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
           distributionUrl=https\://services.gradle.org/distributions/gradle-8.2-all.zip
+          E
+
+      - name: Patch manifest
+        run: |
+          cat > android/app/src/main/AndroidManifest.xml << 'XML'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+                    xmlns:tools="http://schemas.android.com/tools">
+              <uses-permission android:name="android.permission.CAMERA" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+              <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+              <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+              <uses-feature android:name="android.hardware.camera" android:required="true" />
+              <uses-feature android:name="android.hardware.microphone" android:required="true" />
+              <application android:label="Mobile TV Studio" android:name="${applicationName}" android:icon="@mipmap/ic_launcher" android:usesCleartextTraffic="true" tools:replace="android:label">
+                  <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop" android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true" android:windowSoftInputMode="adjustResize" android:screenOrientation="landscape">
+                      <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme" />
+                      <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+                  </activity>
+                  <meta-data android:name="flutterEmbedding" android:value="2" />
+              </application>
+          </manifest>
+          XML
+
+      - name: Patch build.gradle for plugin compatibility
+        run: |
+          cat >> android/build.gradle << 'E'
+
+          subprojects {
+              afterEvaluate { project ->
+                  if (project.hasProperty('android')) {
+                      project.android {
+                          if (compileSdkVersion == null) {
+                              compileSdkVersion 34
+                          }
+                          if (defaultConfig != null) {
+                              if (defaultConfig.targetSdkVersion == null) defaultConfig.targetSdkVersion 34
+                              if (defaultConfig.minSdkVersion == null) defaultConfig.minSdkVersion 24
+                          }
+                      }
+                  }
+              }
+          }
           E
 
       - run: flutter pub get
