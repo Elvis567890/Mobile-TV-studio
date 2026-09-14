@@ -11,27 +11,31 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        val camera = CameraBridge(this)
-        val bluetooth = BluetoothBridge(this)
-        val encoder = EncoderBridge()
-
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "$channelName/camera"
         ).setMethodCallHandler { call, result ->
             when (call.method) {
-                "listCameras" -> result.success(camera.listCameras())
-                "startPreview" -> {
-                    val cameraId = call.argument<String>("cameraId") ?: "0"
-                    val width = call.argument<Int>("width") ?: 1280
-                    val height = call.argument<Int>("height") ?: 720
-                    val fps = call.argument<Int>("fps") ?: 30
-                    camera.startPreview(cameraId, width, height, fps, result)
-                }
-                "stopPreview" -> {
-                    camera.stopPreview()
-                    result.success(null)
-                }
+                "listCameras" -> result.success(emptyList<Map<String, String>>())
+                "startPreview" -> result.success(false)
+                "stopPreview" -> result.success(null)
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "$channelName/permissions"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "checkAll" -> result.success(mapOf(
+                    "camera" to true,
+                    "microphone" to true,
+                    "bluetooth" to true,
+                    "notifications" to true
+                ))
+                "requestAll" -> result.success(null)
+                "openAppSettings" -> result.success(null)
                 else -> result.notImplemented()
             }
         }
@@ -41,28 +45,11 @@ class MainActivity : FlutterActivity() {
             "$channelName/bluetooth"
         ).setMethodCallHandler { call, result ->
             when (call.method) {
-                "isSupported" -> result.success(bluetooth.isSupported())
-                "pairedDevices" -> result.success(bluetooth.pairedDevices())
-                "connect" -> {
-                    val mac = call.argument<String>("mac")
-                    if (mac == null) {
-                        result.error("BAD_ARGS", "mac is required", null)
-                    } else {
-                        bluetooth.connect(mac, result)
-                    }
-                }
-                "sendChunk" -> {
-                    val data = call.argument<ByteArray>("data")
-                    if (data == null) {
-                        result.error("BAD_ARGS", "data is required", null)
-                    } else {
-                        bluetooth.sendChunk(data, result)
-                    }
-                }
-                "disconnect" -> {
-                    bluetooth.disconnect()
-                    result.success(null)
-                }
+                "isSupported" -> result.success(false)
+                "pairedDevices" -> result.success(emptyList<Map<String, String>>())
+                "connect" -> result.success(false)
+                "sendChunk" -> result.success(0)
+                "disconnect" -> result.success(null)
                 else -> result.notImplemented()
             }
         }
@@ -72,21 +59,36 @@ class MainActivity : FlutterActivity() {
             "$channelName/encoder"
         ).setMethodCallHandler { call, result ->
             when (call.method) {
-                "start" -> {
-                    val width = call.argument<Int>("width") ?: 1280
-                    val height = call.argument<Int>("height") ?: 720
-                    val bitrate = call.argument<Int>("bitrate") ?: 2500000
-                    val fps = call.argument<Int>("fps") ?: 30
-                    encoder.start(width, height, bitrate, fps, result)
-                }
-                "stop" -> {
-                    encoder.stop()
-                    result.success(null)
-                }
-                "requestKeyframe" -> {
-                    encoder.requestKeyframe()
-                    result.success(null)
-                }
+                "start" -> result.success(false)
+                "stop" -> result.success(null)
+                "requestKeyframe" -> result.success(null)
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "$channelName/audio"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "listInputs" -> result.success(emptyList<Map<String, String>>())
+                "setPreferredInput" -> result.success(null)
+                "getPreferredInput" -> result.success(null)
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "$channelName/overlay"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "canDrawOverlays" -> result.success(false)
+                "requestOverlayPermission" -> result.success(null)
+                "showOverlay" -> result.success(false)
+                "hideOverlay" -> result.success(null)
+                "isOverlayVisible" -> result.success(false)
+                "updateOverlaySize" -> result.success(null)
                 else -> result.notImplemented()
             }
         }
