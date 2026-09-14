@@ -8,47 +8,171 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - name: Find project root
-        run: |
-          echo "=== Repo contents ==="
-          ls -la
-          echo ""
-          echo "=== Searching for pubspec.yaml ==="
-          PUBSPEC=$(find . -name pubspec.yaml -not -path "*/build/*" | head -1)
-          echo "Found: $PUBSPEC"
-          if [ -z "$PUBSPEC" ]; then
-            echo "ERROR: No pubspec.yaml found anywhere in the repo."
-            exit 1
-          fi
-          echo "PROJECT_ROOT=$(dirname $PUBSPEC)" >> $GITHUB_ENV
-
-      - uses: actions/setup-java@v4
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - uses: subosito/flutter-action@v2
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.24.0'
           channel: 'stable'
           cache: true
 
-      - name: Install dependencies
-        working-directory: ${{ env.PROJECT_ROOT }}
+      - name: Regenerate Android folder with v2 embedding
+        run: |
+          rm -rf android
+          flutter create --platforms=android --org com.yourcompany --project-name mobile_tv_studio .
+          echo "Android folder regenerated:"
+          ls android/
+
+      - name: Force v2 embedding in manifest
+        run: |
+          python3 << 'PYEOF'
+          import re
+          path = 'android/app/src/main/AndroidManifest.xml'
+          with open(path) as f:
+              s = f.read()
+
+          # Remove any existing flutterEmbedding meta-data
+          s = re.sub(r'<meta-data[^>]*android:name="flutterEmbedding"[^>]*/>', '', s)
+
+          # Insert flutterEmbedding=2 before </application>
+          s = s.replace(
+              '</application>',
+              '        <meta-data\n'
+              '            android:name="flutterEmbedding"\n'
+              '            android:value="2" />\n'
+              '    </application>'
+          )
+
+          # Ensure tools namespace present
+          if 'xmlns:tools' not in s:
+              s = s.replace(
+                  'xmlns:android="http://schemas.android.com/apk/res/android"',
+                  'xmlns:android="http://schemas.android.com/apk/res/android"\n          xmlns:tools="http://schemas.android.com/tools"'
+              )
+
+          # Force landscape + cleartext
+          s = s.replace(
+              'android:label="mobile_tv_studio"',
+              'android:label="Mobile TV Studio"\n        android:usesCleartextTraffic="true"\n        tools:replace="android:label"'
+          )
+
+          with open(path, 'w') as f:
+              f.write(s)
+
+          print("=== Manifest after patch ===")
+          print(open(path).read())
+          PYEOF
+
+      - name: Ensure MainActivity uses v2 embedding
+        run: |
+          find android -name MainActivity.kt -exec sh -c '
+            echo "Found: $1"
+            cat > "$1" << "KOTEOF"
+          package com.yourcompany.studio
+
+          import io.flutter.embedding.android.FlutterActivity
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.plugin.common.MethodChannel
+
+          class MainActivity : FlutterActivity() {
+              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_tv_studio/native/camera")
+                      .setMethodCallHandler { call, result ->
+                          when (call.method) {
+                              "listCameras" -> result.success(emptyList<Map<String, String>>())
+                              "startPreview" -> result.success(false)
+                              "stopPreview" -> result.success(null)
+                              else -> result.notImplemented()
+                          }
+                      }
+
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_tv_studio/native/permissions")
+                      .setMethodCallHandler { call, result ->
+                          when (call.method) {
+                              "checkAll" -> result.success(mapOf(
+                                  "camera" to true,
+                                  "microphone" to true,
+                                  "bluetooth" to true,
+                                  "notifications" to true
+                              ))
+                              "requestAll" -> result.success(null)
+                              "openAppSettings" -> result.success(null)
+                              else -> result.notImplemented()
+                          }
+                      }
+
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_tv_studio/native/bluetooth")
+                      .setMethodCallHandler { call, result ->
+                          when (call.method) {
+                              "isSupported" -> result.success(false)
+                              "pairedDevices" -> result.success(emptyList<Map<String, String>>())
+                              "connect" -> result.success(false)
+                              "sendChunk" -> result.success(0)
+                              "disconnect" -> result.success(null)
+                              else -> result.notImplemented()
+                          }
+                      }
+
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_tv_studio/native/encoder")
+                      .setMethodCallHandler { call, result ->
+                          when (call.method) {
+                              "start" -> result.success(false)
+                              "stop" -> result.success(null)
+                              "requestKeyframe" -> result.success(null)
+                              else -> result.notImplemented()
+                          }
+                      }
+
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_tv_studio/native/audio")
+                      .setMethodCallHandler { call, result ->
+                          when (call.method) {
+                              "listInputs" -> result.success(emptyList<Map<String, String>>())
+                              "setPreferredInput" -> result.success(null)
+                              "getPreferredInput" -> result.success(null)
+                              else -> result.notImplemented()
+                          }
+                      }
+
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_tv_studio/native/overlay")
+                      .setMethodCallHandler { call, result ->
+                          when (call.method) {
+                              "canDrawOverlays" -> result.success(false)
+                              "requestOverlayPermission" -> result.success(null)
+                              "showOverlay" -> result.success(false)
+                              "hideOverlay" -> result.success(null)
+                              "isOverlayVisible" -> result.success(false)
+                              "updateOverlaySize" -> result.success(null)
+                              else -> result.notImplemented()
+                          }
+                      }
+              }
+          }
+          KOTEOF
+          ' _ {} \;
+
+      - name: Install Flutter dependencies
         run: flutter pub get
 
       - name: Analyze
-        working-directory: ${{ env.PROJECT_ROOT }}
         run: flutter analyze || true
 
-      - name: Build APK
-        working-directory: ${{ env.PROJECT_ROOT }}
+      - name: Build release APK
         run: flutter build apk --release
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
           name: MobileTVStudio-release
-          path: ${{ env.PROJECT_ROOT }}/build/app/outputs/flutter-apk/app-release.apk
+          path: build/app/outputs/flutter-apk/app-release.apk
