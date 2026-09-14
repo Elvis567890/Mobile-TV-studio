@@ -33,25 +33,77 @@ jobs:
           dependencies:
             flutter:
               sdk: flutter
-            shared_preferences: ^2.3.2
-            provider: ^6.1.2
-            uuid: ^4.5.0
-            path_provider: ^2.1.4
           dev_dependencies:
             flutter_test:
               sdk: flutter
           flutter:
             uses-material-design: true
           P
-
-      - name: Reset android folder
-        run: |
           rm -f pubspec.lock
+
+      - name: Regenerate android
+        run: |
           rm -rf android
           flutter create --platforms=android --org com.yourcompany --project-name mobile_tv_studio .
           rm -f pubspec.lock
 
-      - name: Stub files importing removed plugins
+      - name: Write modern settings.gradle
+        run: |
+          cat > android/settings.gradle << 'E'
+          pluginManagement {
+              def flutterSdkPath = {
+                  def properties = new Properties()
+                  file("local.properties").withInputStream { properties.load(it) }
+                  def flutterSdkPath = properties.getProperty("flutter.sdk")
+                  return flutterSdkPath
+              }()
+              includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          plugins {
+              id "dev.flutter.flutter-plugin-loader" version "1.0.0"
+              id "com.android.application" version "8.1.0" apply false
+              id "org.jetbrains.kotlin.android" version "1.9.22" apply false
+          }
+          include ":app"
+          E
+
+      - name: Write modern build.gradle
+        run: |
+          cat > android/build.gradle << 'E'
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.buildDir = "../build"
+          subprojects {
+              project.buildDir = "${rootProject.buildDir}/${project.name}"
+          }
+          subprojects {
+              project.evaluationDependsOn(":app")
+          }
+          tasks.register("clean", Delete) {
+              delete rootProject.buildDir
+          }
+          E
+
+      - name: Write gradle.properties
+        run: |
+          cat > android/gradle.properties << 'E'
+          org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
+          android.useAndroidX=true
+          android.enableJetifier=true
+          android.nonTransitiveRClass=false
+          android.nonFinalResIds=false
+          E
+
+      - name: Stub files with removed plugins
         run: |
           mkdir -p lib/transport lib/output lib/camera_mode lib/ads
           cat > lib/transport/bluetooth_transport.dart << 'S'
@@ -132,6 +184,11 @@ jobs:
             );
           }
           S
+
+      - name: Show generated files
+        run: |
+          echo "=== settings.gradle ===" && cat android/settings.gradle
+          echo "" && echo "=== build.gradle ===" && cat android/build.gradle
 
       - run: flutter pub get
       - run: flutter build apk --release
