@@ -28,6 +28,52 @@ jobs:
           rm -rf android
           flutter create --platforms=android --org com.yourcompany --project-name mobile_tv_studio .
 
+      - name: Overwrite root build.gradle to fix plugin property errors
+        run: |
+          cat > android/build.gradle << 'EOF'
+          buildscript {
+              ext.kotlin_version = '1.9.22'
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+              dependencies {
+                  classpath 'com.android.tools.build:gradle:8.1.4'
+                  classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+              }
+          }
+
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.buildDir = '../build'
+          subprojects {
+              project.buildDir = "${rootProject.buildDir}/${project.name}"
+          }
+          subprojects {
+              project.evaluationDependsOn(':app')
+          }
+
+          // =========================================================
+          // FIX: Define ext.flutter so plugins like flutter_blue_plus_android
+          // can read compileSdkVersion, minSdkVersion, etc.
+          // =========================================================
+          ext.flutter = [
+              compileSdkVersion: 34,
+              minSdkVersion: 24,
+              targetSdkVersion: 34,
+              ndkVersion: "25.1.8937393"
+          ]
+
+          tasks.register("clean", Delete) {
+              delete rootProject.buildDir
+          }
+          EOF
+
       - name: Overwrite app build.gradle
         run: |
           cat > android/app/build.gradle << 'EOF'
