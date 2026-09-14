@@ -63,7 +63,64 @@ jobs:
           }
           EOF
 
-      - name: Overwrite settings.gradle
+      - name: Write gradle.properties with SDK overrides
+        run: |
+          cat > android/gradle.properties << 'EOF'
+          org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
+          android.useAndroidX=true
+          android.enableJetifier=true
+          android.enableR8=true
+          android.defaults.buildfeatures.buildconfig=true
+          android.nonTransitiveRClass=false
+          android.nonFinalResIds=false
+          EOF
+
+      - name: Write init.gradle to force SDK versions everywhere
+        run: |
+          cat > android/init.gradle << 'EOF'
+          allprojects {
+              buildscript {
+                  repositories {
+                      google()
+                      mavenCentral()
+                  }
+              }
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          beforeProject { project ->
+              project.ext.compileSdkVersion = 34
+              project.ext.targetSdkVersion = 34
+              project.ext.minSdkVersion = 24
+              project.ext.ndkVersion = "25.1.8937393"
+              project.ext.kotlin_version = "1.9.22"
+          }
+
+          subprojects {
+              afterEvaluate { project ->
+                  if (project.hasProperty('android')) {
+                      project.android {
+                          if (compileSdkVersion == null) {
+                              compileSdkVersion 34
+                          }
+                          if (defaultConfig != null) {
+                              if (defaultConfig.targetSdkVersion == null) {
+                                  defaultConfig.targetSdkVersion 34
+                              }
+                              if (defaultConfig.minSdkVersion == null) {
+                                  defaultConfig.minSdkVersion 24
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+          EOF
+
+      - name: Write settings.gradle with init script hook
         run: |
           cat > android/settings.gradle << 'EOF'
           pluginManagement {
@@ -91,29 +148,10 @@ jobs:
           }
 
           include ":app"
-          EOF
 
-      - name: Overwrite gradle-wrapper.properties
-        run: |
-          mkdir -p android/gradle/wrapper
-          cat > android/gradle/wrapper/gradle-wrapper.properties << 'EOF'
-          distributionBase=GRADLE_USER_HOME
-          distributionPath=wrapper/dists
-          zipStoreBase=GRADLE_USER_HOME
-          zipStorePath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-8.2-all.zip
-          EOF
-
-      - name: Overwrite gradle.properties
-        run: |
-          cat > android/gradle.properties << 'EOF'
-          org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
-          android.useAndroidX=true
-          android.enableJetifier=true
-          android.enableR8=true
-          android.defaults.buildfeatures.buildconfig=true
-          android.nonTransitiveRClass=false
-          android.nonFinalResIds=false
+          gradle.rootProject {
+              apply from: new File(rootDir, 'init.gradle')
+          }
           EOF
 
       - name: Overwrite app build.gradle
@@ -128,19 +166,8 @@ jobs:
           }
 
           def flutterRoot = localProperties.getProperty('flutter.sdk')
-          if (flutterRoot == null) {
-              throw new GradleException("Flutter SDK not found.")
-          }
-
-          def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
-          if (flutterVersionCode == null) {
-              flutterVersionCode = '1'
-          }
-
-          def flutterVersionName = localProperties.getProperty('flutter.versionName')
-          if (flutterVersionName == null) {
-              flutterVersionName = '1.0'
-          }
+          def flutterVersionCode = localProperties.getProperty('flutter.versionCode') ?: '1'
+          def flutterVersionName = localProperties.getProperty('flutter.versionName') ?: '1.0'
 
           apply plugin: 'com.android.application'
           apply plugin: 'kotlin-android'
@@ -186,11 +213,11 @@ jobs:
           }
 
           dependencies {
-              implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
+              implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.22"
           }
           EOF
 
-      - name: Overwrite AndroidManifest.xml
+      - name: Overwrite manifest
         run: |
           cat > android/app/src/main/AndroidManifest.xml << 'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -227,7 +254,7 @@ jobs:
           </manifest>
           EOF
 
-      - name: Overwrite MainActivity.kt
+      - name: Simplify MainActivity
         run: |
           find android -name "MainActivity.kt" -exec sh -c '
           cat > "$1" << "KOTEOF"
@@ -242,11 +269,12 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build APK
-        run: flutter build apk --release
+      - name: Build release APK
+        run: flutter build apk --release --no-shrink
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: MobileTVStudio-release
           path: build/app/outputs/flutter-apk/app-release.apk
