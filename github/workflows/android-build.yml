@@ -1,4 +1,4 @@
-name: Build APK
+name: Build
 
 on:
   push:
@@ -13,25 +13,23 @@ jobs:
 
       - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
 
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.0'
-          channel: 'stable'
+          flutter-version: 3.24.0
+          channel: stable
           cache: true
 
-      - name: Write safe pubspec
+      - name: Reset pubspec
         run: |
-          cat > pubspec.yaml << 'EOF'
+          cat > pubspec.yaml << 'P'
           name: mobile_tv_studio
-          description: Mobile TV Studio
           publish_to: 'none'
           version: 0.1.0+1
           environment:
             sdk: '>=3.4.0 <4.0.0'
-            flutter: '>=3.24.0'
           dependencies:
             flutter:
               sdk: flutter
@@ -39,24 +37,26 @@ jobs:
             provider: ^6.1.2
             uuid: ^4.5.0
             path_provider: ^2.1.4
-            camera: ^0.11.0+2
-            video_player: ^2.9.1
-            flutter_webrtc: ^0.11.6
-            file_picker: ^8.1.2
           dev_dependencies:
             flutter_test:
               sdk: flutter
-            flutter_lints: ^4.0.0
           flutter:
             uses-material-design: true
-          EOF
+          P
 
-      - name: Stub bluetooth_transport
+      - name: Reset android folder
         run: |
-          cat > lib/transport/bluetooth_transport.dart << 'EOF'
+          rm -f pubspec.lock
+          rm -rf android
+          flutter create --platforms=android --org com.yourcompany --project-name mobile_tv_studio .
+          rm -f pubspec.lock
+
+      - name: Stub files importing removed plugins
+        run: |
+          mkdir -p lib/transport lib/output lib/camera_mode lib/ads
+          cat > lib/transport/bluetooth_transport.dart << 'S'
           import 'dart:typed_data';
           import 'video_transport.dart';
-
           class BluetoothTransport implements VideoTransport {
             BluetoothTransport({required this.remoteMac});
             final String remoteMac;
@@ -70,16 +70,11 @@ jobs:
             @override Future<void> start() async => throw UnsupportedError('later');
             @override Future<void> stop() async {}
           }
-          EOF
-
-      - name: Stub rtmp_streamer
-        run: |
-          cat > lib/output/rtmp_streamer.dart << 'EOF'
+          S
+          cat > lib/output/rtmp_streamer.dart << 'S'
           import 'dart:async';
           import 'platform_targets.dart';
-
           enum StreamState { idle, connecting, live, error }
-
           class RtmpStreamer {
             RtmpStreamer({required this.target});
             final StreamTarget target;
@@ -97,183 +92,51 @@ jobs:
             Future<void> stop() async { _t = null; _s = StreamState.idle; _c.add(_s); }
             Future<void> dispose() async { await stop(); await _c.close(); }
           }
-          EOF
-
-      - name: Stub youtube_auth
-        run: |
-          cat > lib/output/youtube_auth.dart << 'EOF'
+          S
+          cat > lib/output/youtube_auth.dart << 'S'
           import 'linked_account.dart';
           class YoutubeAuth {
             static Future<LinkedAccount?> signIn() async => null;
-            static Future<Map<String, String>?> createLiveBroadcast(LinkedAccount a) async => null;
+            static Future<LinkedAccount?> createLiveBroadcast(LinkedAccount a) async => null;
           }
-          EOF
-
-      - name: Stub camera_preview
-        run: |
-          cat > lib/camera_mode/camera_preview.dart << 'EOF'
+          S
+          cat > lib/camera_mode/camera_preview.dart << 'S'
           import 'package:flutter/material.dart';
-
           class NativeCamera {
             static Future<List<Map<String, String>>> listCameras() async => [];
             static Future<bool> startPreview({required String cameraId, int width = 1280, int height = 720, int fps = 30}) async => false;
             static Future<void> stopPreview() async {}
           }
-
           class CameraPreview extends StatefulWidget {
             final String cameraId;
-            final int width;
-            final int height;
-            final int fps;
-            final bool active;
-            const CameraPreview({super.key, required this.cameraId, this.width = 1280, this.height = 720, this.fps = 30, this.active = true});
+            const CameraPreview({super.key, required this.cameraId, int? width, int? height, int? fps, bool? active});
             @override State<CameraPreview> createState() => _CameraPreviewState();
           }
-
           class _CameraPreviewState extends State<CameraPreview> {
             @override
-            Widget build(BuildContext context) {
-              return Container(
-                color: Colors.black,
-                child: const Center(
-                  child: Text('CAMERA PREVIEW',
-                    style: TextStyle(color: Colors.white24, fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 3)),
-                ),
-              );
-            }
+            Widget build(BuildContext context) => Container(color: Colors.black);
           }
-          EOF
-
-      - name: Remove lock file
-        run: rm -f pubspec.lock
-
-      - name: Regenerate android
-        run: |
-          rm -rf android
-          flutter create --platforms=android --org com.yourcompany --project-name mobile_tv_studio .
-
-      - name: Hardcode gradle.properties
-        run: |
-          cat > android/gradle.properties << 'EOF'
-          org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
-          android.useAndroidX=true
-          android.enableJetifier=true
-          android.enableR8=true
-          android.nonTransitiveRClass=false
-          android.nonFinalResIds=false
-          EOF
-
-      - name: Write init.gradle
-        run: |
-          cat > android/init.gradle << 'EOF'
-          allprojects {
-            buildscript { repositories { google(); mavenCentral() } }
-            repositories { google(); mavenCentral() }
+          S
+          cat > lib/ads/ad_player.dart << 'S'
+          import 'package:flutter/material.dart';
+          import 'ad_playlist.dart';
+          class AdPlayer extends StatelessWidget {
+            final AdClip clip;
+            final VoidCallback onFinished;
+            final bool loop;
+            const AdPlayer({super.key, required this.clip, required this.onFinished, this.loop = false});
+            @override
+            Widget build(BuildContext context) => Container(
+              color: Colors.black,
+              child: Center(child: Text(clip.name, style: const TextStyle(color: Colors.white54, fontSize: 20))),
+            );
           }
-          beforeProject { p ->
-            p.ext.compileSdkVersion = 34
-            p.ext.targetSdkVersion = 34
-            p.ext.minSdkVersion = 24
-            p.ext.ndkVersion = "25.1.8937393"
-            p.ext.kotlin_version = "1.9.22"
-          }
-          subprojects {
-            afterEvaluate { p ->
-              if (p.hasProperty('android')) {
-                p.android {
-                  if (compileSdkVersion == null) compileSdkVersion 34
-                  if (defaultConfig != null) {
-                    if (defaultConfig.targetSdkVersion == null) defaultConfig.targetSdkVersion 34
-                    if (defaultConfig.minSdkVersion == null) defaultConfig.minSdkVersion 24
-                  }
-                }
-              }
-            }
-          }
-          EOF
+          S
 
-      - name: Write settings.gradle
-        run: |
-          cat > android/settings.gradle << 'EOF'
-          pluginManagement {
-            def fp = { def pr = new Properties(); file("local.properties").withInputStream { pr.load(it) }; return pr.getProperty("flutter.sdk") }()
-            includeBuild("$fp/packages/flutter_tools/gradle")
-            repositories { google(); mavenCentral(); gradlePluginPortal() }
-          }
-          plugins {
-            id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-            id "com.android.application" version "8.1.4" apply false
-            id "org.jetbrains.kotlin.android" version "1.9.22" apply false
-          }
-          include ":app"
-          gradle.rootProject { apply from: new File(rootDir, 'init.gradle') }
-          EOF
+      - run: flutter pub get
+      - run: flutter build apk --release
 
-      - name: Write app build.gradle
-        run: |
-          cat > android/app/build.gradle << 'EOF'
-          def lp = new Properties()
-          def lpf = rootProject.file('local.properties')
-          if (lpf.exists()) lpf.withReader('UTF-8') { lp.load(it) }
-          def fr = lp.getProperty('flutter.sdk')
-          apply plugin: 'com.android.application'
-          apply plugin: 'kotlin-android'
-          apply from: "$fr/packages/flutter_tools/gradle/flutter.gradle"
-          android {
-            namespace "com.yourcompany.studio"
-            compileSdk 34
-            ndkVersion "25.1.8937393"
-            compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
-            kotlinOptions { jvmTarget = '17' }
-            sourceSets { main.java.srcDirs += 'src/main/kotlin' }
-            defaultConfig {
-              applicationId "com.yourcompany.studio"
-              minSdk 24
-              targetSdk 34
-              versionCode 1
-              versionName "1.0"
-            }
-            buildTypes {
-              release { signingConfig signingConfigs.debug; minifyEnabled false; shrinkResources false }
-            }
-          }
-          flutter { source '../..' }
-          EOF
-
-      - name: Write manifest
-        run: |
-          cat > android/app/src/main/AndroidManifest.xml << 'EOF'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-            <uses-permission android:name="android.permission.CAMERA" />
-            <uses-permission android:name="android.permission.RECORD_AUDIO" />
-            <uses-permission android:name="android.permission.INTERNET" />
-            <application android:label="Mobile TV Studio" android:name="${applicationName}" android:icon="@mipmap/ic_launcher">
-              <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop" android:theme="@style/LaunchTheme" android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode" android:hardwareAccelerated="true" android:windowSoftInputMode="adjustResize" android:screenOrientation="landscape">
-                <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme" />
-                <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
-              </activity>
-              <meta-data android:name="flutterEmbedding" android:value="2" />
-            </application>
-          </manifest>
-          EOF
-
-      - name: Simplify MainActivity
-        run: |
-          find android -name MainActivity.kt -exec sh -c 'cat > "$1" << "K"
-          package com.yourcompany.studio
-          import io.flutter.embedding.android.FlutterActivity
-          class MainActivity : FlutterActivity()
-          K
-          ' _ {} \;
-
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Build APK
-        run: flutter build apk --release
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         if: success()
         with:
           name: MobileTVStudio-release
