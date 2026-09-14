@@ -47,61 +47,16 @@ jobs:
           flutter create --platforms=android --org com.yourcompany --project-name mobile_tv_studio .
           rm -f pubspec.lock
 
-      - name: Write modern settings.gradle
+      - name: Force Gradle 8.2 wrapper
         run: |
-          cat > android/settings.gradle << 'E'
-          pluginManagement {
-              def flutterSdkPath = {
-                  def properties = new Properties()
-                  file("local.properties").withInputStream { properties.load(it) }
-                  def flutterSdkPath = properties.getProperty("flutter.sdk")
-                  return flutterSdkPath
-              }()
-              includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-          plugins {
-              id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-              id "com.android.application" version "8.1.0" apply false
-              id "org.jetbrains.kotlin.android" version "1.9.22" apply false
-          }
-          include ":app"
+          cat > android/gradle/wrapper/gradle-wrapper.properties << 'E'
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.2-all.zip
           E
-
-      - name: Write modern build.gradle
-        run: |
-          cat > android/build.gradle << 'E'
-          allprojects {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          rootProject.buildDir = "../build"
-          subprojects {
-              project.buildDir = "${rootProject.buildDir}/${project.name}"
-          }
-          subprojects {
-              project.evaluationDependsOn(":app")
-          }
-          tasks.register("clean", Delete) {
-              delete rootProject.buildDir
-          }
-          E
-
-      - name: Write gradle.properties
-        run: |
-          cat > android/gradle.properties << 'E'
-          org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
-          android.useAndroidX=true
-          android.enableJetifier=true
-          android.nonTransitiveRClass=false
-          android.nonFinalResIds=false
-          E
+          cat android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Stub files with removed plugins
         run: |
@@ -184,11 +139,6 @@ jobs:
             );
           }
           S
-
-      - name: Show generated files
-        run: |
-          echo "=== settings.gradle ===" && cat android/settings.gradle
-          echo "" && echo "=== build.gradle ===" && cat android/build.gradle
 
       - run: flutter pub get
       - run: flutter build apk --release
