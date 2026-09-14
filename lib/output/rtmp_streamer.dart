@@ -1,15 +1,10 @@
 import 'dart:async';
-
-import 'package:flutter/foundation.dart';
-
 import 'platform_targets.dart';
 
-/// State of a single RTMP output.
 enum StreamState { idle, connecting, live, error }
 
 class RtmpStreamer {
   RtmpStreamer({required this.target});
-
   final StreamTarget target;
 
   StreamState _state = StreamState.idle;
@@ -20,50 +15,28 @@ class RtmpStreamer {
 
   int _bytesSent = 0;
   int get bytesSent => _bytesSent;
-
-  /// Approximate MB sent since going live.
   double get megabytesSent => _bytesSent / (1024 * 1024);
 
   DateTime? _startedAt;
-  Duration get uptime =>
-      _startedAt == null ? Duration.zero : DateTime.now().difference(_startedAt!);
+  Duration get uptime => _startedAt == null
+      ? Duration.zero
+      : DateTime.now().difference(_startedAt!);
 
-  /// Begin publishing. In a full build this calls into a native
-  /// RTMP library that muxes the mixed video+audio into FLV and
-  /// pushes it to `target.fullUrl`.
-  ///
-  /// The native side is wired in a later batch. This class owns the
-  /// state machine and stats so the UI is already complete.
   Future<void> start() async {
-    _setState(StreamState.connecting);
-    try {
-      // Placeholder for the native RTMP publish call.
-      // On Android: a MediaCodec -> FLV muxer -> RTMP socket.
-      // On iOS:     VideoToolbox -> FLV muxer -> RTMP socket.
-      await Future.delayed(const Duration(milliseconds: 600));
-
-      _startedAt = DateTime.now();
-      _bytesSent = 0;
-      _setState(StreamState.live);
-    } catch (e) {
-      _setState(StreamState.error);
-      debugPrint('RTMP start failed: $e');
-    }
+    _state = StreamState.connecting;
+    _stateController.add(_state);
+    await Future.delayed(const Duration(milliseconds: 200));
+    _startedAt = DateTime.now();
+    _state = StreamState.live;
+    _stateController.add(_state);
   }
 
-  /// Call from the encoder for every muxed chunk.
-  void reportBytes(int n) {
-    _bytesSent += n;
-  }
+  void reportBytes(int n) => _bytesSent += n;
 
   Future<void> stop() async {
     _startedAt = null;
-    _setState(StreamState.idle);
-  }
-
-  void _setState(StreamState s) {
-    _state = s;
-    if (!_stateController.isClosed) _stateController.add(s);
+    _state = StreamState.idle;
+    _stateController.add(_state);
   }
 
   Future<void> dispose() async {
