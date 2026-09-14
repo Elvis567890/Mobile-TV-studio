@@ -28,132 +28,6 @@ jobs:
           rm -rf android
           flutter create --platforms=android --org com.yourcompany --project-name mobile_tv_studio .
 
-      - name: Overwrite root build.gradle
-        run: |
-          cat > android/build.gradle << 'EOF'
-          buildscript {
-              ext.kotlin_version = '1.9.22'
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-              dependencies {
-                  classpath 'com.android.tools.build:gradle:8.1.4'
-                  classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
-              }
-          }
-
-          allprojects {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-
-          rootProject.buildDir = '../build'
-          subprojects {
-              project.buildDir = "${rootProject.buildDir}/${project.name}"
-          }
-          subprojects {
-              project.evaluationDependsOn(':app')
-          }
-
-          tasks.register("clean", Delete) {
-              delete rootProject.buildDir
-          }
-          EOF
-
-      - name: Write gradle.properties with SDK overrides
-        run: |
-          cat > android/gradle.properties << 'EOF'
-          org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
-          android.useAndroidX=true
-          android.enableJetifier=true
-          android.enableR8=true
-          android.defaults.buildfeatures.buildconfig=true
-          android.nonTransitiveRClass=false
-          android.nonFinalResIds=false
-          EOF
-
-      - name: Write init.gradle to force SDK versions everywhere
-        run: |
-          cat > android/init.gradle << 'EOF'
-          allprojects {
-              buildscript {
-                  repositories {
-                      google()
-                      mavenCentral()
-                  }
-              }
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-
-          beforeProject { project ->
-              project.ext.compileSdkVersion = 34
-              project.ext.targetSdkVersion = 34
-              project.ext.minSdkVersion = 24
-              project.ext.ndkVersion = "25.1.8937393"
-              project.ext.kotlin_version = "1.9.22"
-          }
-
-          subprojects {
-              afterEvaluate { project ->
-                  if (project.hasProperty('android')) {
-                      project.android {
-                          if (compileSdkVersion == null) {
-                              compileSdkVersion 34
-                          }
-                          if (defaultConfig != null) {
-                              if (defaultConfig.targetSdkVersion == null) {
-                                  defaultConfig.targetSdkVersion 34
-                              }
-                              if (defaultConfig.minSdkVersion == null) {
-                                  defaultConfig.minSdkVersion 24
-                              }
-                          }
-                      }
-                  }
-              }
-          }
-          EOF
-
-      - name: Write settings.gradle with init script hook
-        run: |
-          cat > android/settings.gradle << 'EOF'
-          pluginManagement {
-              def flutterSdkPath = {
-                  def properties = new Properties()
-                  file("local.properties").withInputStream { properties.load(it) }
-                  def flutterSdkPath = properties.getProperty("flutter.sdk")
-                  assert flutterSdkPath != null, "flutter.sdk not set in local.properties"
-                  return flutterSdkPath
-              }()
-
-              includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
-
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-
-          plugins {
-              id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-              id "com.android.application" version "8.1.4" apply false
-              id "org.jetbrains.kotlin.android" version "1.9.22" apply false
-          }
-
-          include ":app"
-
-          gradle.rootProject {
-              apply from: new File(rootDir, 'init.gradle')
-          }
-          EOF
-
       - name: Overwrite app build.gradle
         run: |
           cat > android/app/build.gradle << 'EOF'
@@ -256,15 +130,15 @@ jobs:
 
       - name: Simplify MainActivity
         run: |
-          find android -name "MainActivity.kt" -exec sh -c '
-          cat > "$1" << "KOTEOF"
+          # Ensure the directory matches the namespace
+          mkdir -p android/app/src/main/kotlin/com/yourcompany/studio
+          cat > android/app/src/main/kotlin/com/yourcompany/studio/MainActivity.kt << 'KOTEOF'
           package com.yourcompany.studio
 
           import io.flutter.embedding.android.FlutterActivity
 
           class MainActivity : FlutterActivity()
           KOTEOF
-          ' _ {} \;
 
       - name: Install dependencies
         run: flutter pub get
