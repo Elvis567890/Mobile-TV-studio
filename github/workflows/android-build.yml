@@ -10,19 +10,45 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Find project root
+        run: |
+          echo "=== Repo contents ==="
+          ls -la
+          echo ""
+          echo "=== Searching for pubspec.yaml ==="
+          PUBSPEC=$(find . -name pubspec.yaml -not -path "*/build/*" | head -1)
+          echo "Found: $PUBSPEC"
+          if [ -z "$PUBSPEC" ]; then
+            echo "ERROR: No pubspec.yaml found anywhere in the repo."
+            exit 1
+          fi
+          echo "PROJECT_ROOT=$(dirname $PUBSPEC)" >> $GITHUB_ENV
+
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
+
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.19.0'
           channel: 'stable'
           cache: true
-      - run: flutter pub get
-      - run: flutter analyze || true
-      - run: flutter build apk --release
+
+      - name: Install dependencies
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: flutter analyze || true
+
+      - name: Build APK
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: flutter build apk --release
+
       - uses: actions/upload-artifact@v4
         with:
           name: MobileTVStudio-release
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: ${{ env.PROJECT_ROOT }}/build/app/outputs/flutter-apk/app-release.apk
