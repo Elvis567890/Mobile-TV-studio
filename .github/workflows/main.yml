@@ -68,7 +68,7 @@ jobs:
 
           cat > lib/services/config.dart << 'D'
           class AppConfig {
-            // Replace this AFTER you deploy the relay to Render.
+            // Update this URL after you deploy the relay to Render.
             static const String signalingUrl = 'wss://mobile-tv-relay.onrender.com';
             static const String roomId = 'studio1';
           }
@@ -81,11 +81,7 @@ jobs:
           enum SignalType { offer, answer, candidate, join, leave }
           class SignalMessage {
             final SignalType type;
-            final String room;
-            final String from;
-            final String sdp;
-            final String mid;
-            final int mline;
+            final String room; final String from; final String sdp; final String mid; final int mline;
             SignalMessage({required this.type, required this.room, required this.from, this.sdp = '', this.mid = '', this.mline = 0});
             Map<String, dynamic> toJson() => {'type': type.name, 'room': room, 'from': from, 'sdp': sdp, 'mid': mid, 'mline': mline};
             factory SignalMessage.fromJson(Map<String, dynamic> j) => SignalMessage(
@@ -93,9 +89,7 @@ jobs:
               room: j['room'] ?? '', from: j['from'] ?? '', sdp: j['sdp'] ?? '', mid: j['mid'] ?? '', mline: j['mline'] ?? 0);
           }
           class SignalingClient {
-            final String serverUrl;
-            final String roomId;
-            final String clientId;
+            final String serverUrl; final String roomId; final String clientId;
             SignalingClient({required this.serverUrl, required this.roomId, required this.clientId});
             WebSocketChannel? _channel;
             final _controller = StreamController<SignalMessage>.broadcast();
@@ -120,29 +114,19 @@ jobs:
           import 'dart:async';
           import 'package:flutter_webrtc/flutter_webrtc.dart';
           import 'signaling.dart';
-
           class WebRtcSession {
-            final String serverUrl;
-            final String roomId;
-            final String clientId;
-            final bool isCaller;
-
+            final String serverUrl; final String roomId; final String clientId; final bool isCaller;
             WebRtcSession({required this.serverUrl, required this.roomId, required this.clientId, required this.isCaller});
-
-            RTCPeerConnection? _pc;
-            MediaStream? _localStream;
-            SignalingClient? _signal;
+            RTCPeerConnection? _pc; MediaStream? _localStream; SignalingClient? _signal;
             StreamSubscription<SignalMessage>? _sub;
             final _remote = RTCVideoRenderer();
-            bool _rendererReady = false;
-
+            bool _ready = false;
             RTCVideoRenderer get renderer => _remote;
             MediaStream? get localStream => _localStream;
-            bool get ready => _rendererReady;
-
+            bool get ready => _ready;
             Future<bool> start() async {
               try {
-                if (!_rendererReady) { await _remote.initialize(); _rendererReady = true; }
+                if (!_ready) { await _remote.initialize(); _ready = true; }
                 _pc = await createPeerConnection({
                   'iceServers': [
                     {'urls': 'stun:stun.l.google.com:19302'},
@@ -150,21 +134,13 @@ jobs:
                   ],
                   'sdpSemantics': 'unified-plan',
                 });
-                _pc!.onIceCandidate = (c) {
-                  _signal?.send(SignalMessage(type: SignalType.candidate, room: roomId, from: clientId,
-                    sdp: c.candidate ?? '', mid: c.sdpMid ?? '', mline: c.sdpMLineIndex ?? 0));
-                };
-                _pc!.onTrack = (e) {
-                  if (e.streams.isNotEmpty) _remote.srcObject = e.streams[0];
-                };
+                _pc!.onIceCandidate = (c) { _signal?.send(SignalMessage(type: SignalType.candidate, room: roomId, from: clientId, sdp: c.candidate ?? '', mid: c.sdpMid ?? '', mline: c.sdpMLineIndex ?? 0)); };
+                _pc!.onTrack = (e) { if (e.streams.isNotEmpty) _remote.srcObject = e.streams[0]; };
                 _localStream = await navigator.mediaDevices.getUserMedia({
-                  'audio': true,
-                  'video': {'facingMode': 'environment', 'width': {'ideal': 854}, 'height': {'ideal': 480}},
-                });
+                  'audio': true, 'video': {'facingMode': 'environment', 'width': {'ideal': 854}, 'height': {'ideal': 480}}});
                 for (final t in _localStream!.getTracks()) { await _pc!.addTrack(t, _localStream!); }
                 _signal = SignalingClient(serverUrl: serverUrl, roomId: roomId, clientId: clientId);
-                final ok = await _signal!.connect();
-                if (!ok) return false;
+                if (!await _signal!.connect()) return false;
                 _sub = _signal!.messages.listen(_onSignal);
                 if (isCaller) {
                   final offer = await _pc!.createOffer();
@@ -174,21 +150,19 @@ jobs:
                 return true;
               } catch (_) { return false; }
             }
-
             Future<void> _onSignal(SignalMessage m) async {
               if (m.from == clientId) return;
               if (m.type == SignalType.offer) {
                 await _pc!.setRemoteDescription(RTCSessionDescription(m.sdp, 'offer'));
-                final answer = await _pc!.createAnswer();
-                await _pc!.setLocalDescription(answer);
-                _signal!.send(SignalMessage(type: SignalType.answer, room: roomId, from: clientId, sdp: answer.sdp ?? ''));
+                final a = await _pc!.createAnswer();
+                await _pc!.setLocalDescription(a);
+                _signal!.send(SignalMessage(type: SignalType.answer, room: roomId, from: clientId, sdp: a.sdp ?? ''));
               } else if (m.type == SignalType.answer) {
                 await _pc!.setRemoteDescription(RTCSessionDescription(m.sdp, 'answer'));
               } else if (m.type == SignalType.candidate) {
                 await _pc!.addCandidate(RTCIceCandidate(m.sdp, m.mid, m.mline));
               }
             }
-
             Future<void> stop() async {
               await _sub?.cancel();
               await _signal?.disconnect();
@@ -202,8 +176,7 @@ jobs:
 
           cat > lib/models/overlay_item.dart << 'D'
           class OverlayItem {
-            final String id;
-            final String text;
+            final String id; final String text;
             double x; double y; double size; int color;
             OverlayItem({required this.id, required this.text, required this.x, required this.y, this.size = 20, this.color = 0xFFFFFFFF});
             Map<String, dynamic> toJson() => {'id': id, 'text': text, 'x': x, 'y': y, 'size': size, 'color': color};
@@ -341,30 +314,18 @@ jobs:
             WebRtcSession? _session;
             void _cycleQ() => setState(() => _quality = _quality == '720p' ? '480p' : _quality == '480p' ? '360p' : '720p');
             void _cycleFps() => setState(() { const o = [24, 25, 30, 35, 60]; _fps = o[(o.indexOf(_fps) + 1) % o.length]; });
-
             Future<void> _toggle() async {
-              if (_live) {
-                await _session?.stop();
-                setState(() { _live = false; _status = 'OFFLINE'; });
-              } else {
+              if (_live) { await _session?.stop(); setState(() { _live = false; _status = 'OFFLINE'; }); }
+              else {
                 setState(() => _status = 'CONNECTING…');
-                final s = WebRtcSession(
-                  serverUrl: AppConfig.signalingUrl,
-                  roomId: AppConfig.roomId,
-                  clientId: 'cam_${DateTime.now().millisecondsSinceEpoch}',
-                  isCaller: true);
+                final s = WebRtcSession(serverUrl: AppConfig.signalingUrl, roomId: AppConfig.roomId,
+                  clientId: 'cam_${DateTime.now().millisecondsSinceEpoch}', isCaller: true);
                 final ok = await s.start();
-                if (ok) {
-                  _session = s;
-                  setState(() { _live = true; _status = 'LIVE'; });
-                } else {
-                  setState(() => _status = 'RELAY OFFLINE');
-                }
+                if (ok) { _session = s; setState(() { _live = true; _status = 'LIVE'; }); }
+                else { setState(() => _status = 'RELAY OFFLINE'); }
               }
             }
-
             @override void dispose() { _session?.stop(); super.dispose(); }
-
             @override Widget build(BuildContext context) => Scaffold(
               appBar: AppBar(title: const Text('CAMERA NODE', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)),
                 backgroundColor: const Color(0xFF141414),
@@ -478,6 +439,7 @@ jobs:
           cat > lib/screens/director_screen.dart << 'D'
           import 'dart:async';
           import 'package:flutter/material.dart';
+          import 'package:flutter_webrtc/flutter_webrtc.dart';
           import 'graphics_editor.dart';
           import 'placeholder_screen.dart';
           import '../services/webrtc_session.dart';
@@ -506,8 +468,7 @@ jobs:
 
             Future<void> _connect() async {
               setState(() => _connStatus = 'CONNECTING…');
-              final s = WebRtcSession(
-                serverUrl: AppConfig.signalingUrl, roomId: AppConfig.roomId,
+              final s = WebRtcSession(serverUrl: AppConfig.signalingUrl, roomId: AppConfig.roomId,
                 clientId: 'dir_${DateTime.now().millisecondsSinceEpoch}', isCaller: false);
               final ok = await s.start();
               if (ok) { _session = s; setState(() => _connStatus = 'CONNECTED'); }
@@ -572,8 +533,7 @@ jobs:
                   return Stack(children: [
                     if (hasRemote) Positioned.fill(child: RTCVideoView(_session!.renderer, mirror: false, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover))
                     else Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      const Icon(Icons.videocam_off, color: Colors.white24, size: 32),
-                      const SizedBox(height: 6),
+                      const Icon(Icons.videocam_off, color: Colors.white24, size: 32), const SizedBox(height: 6),
                       Text(_connStatus == 'RELAY OFFLINE' ? 'RELAY NOT DEPLOYED YET' : 'WAITING FOR CAMERA',
                         style: const TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 2))])),
                     Positioned(top: 6, left: 6, child: Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -672,7 +632,52 @@ jobs:
           flutter create --platforms=android --org com.yourcompany --project-name mobile_tv_studio .
           rm -f pubspec.lock
 
-      - name: Force Gradle 8.2
+      - name: Overwrite android/build.gradle with correct order
+        run: |
+          cat > android/build.gradle << 'E'
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.buildDir = "../build"
+
+          subprojects {
+              project.buildDir = "${rootProject.buildDir}/${project.name}"
+
+              afterEvaluate { project ->
+                  if (project.hasProperty('android')) {
+                      project.android {
+                          if (compileSdkVersion == null) {
+                              compileSdkVersion 34
+                          }
+                          if (defaultConfig != null) {
+                              if (defaultConfig.targetSdkVersion == null) {
+                                  defaultConfig.targetSdkVersion 34
+                              }
+                              if (defaultConfig.minSdkVersion == null) {
+                                  defaultConfig.minSdkVersion 24
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+
+          subprojects {
+              project.evaluationDependsOn(":app")
+          }
+
+          tasks.register("clean", Delete) {
+              delete rootProject.buildDir
+          }
+          E
+          echo "=== android/build.gradle written ==="
+          cat android/build.gradle
+
+      - name: Force Gradle 8.2 wrapper
         run: |
           cat > android/gradle/wrapper/gradle-wrapper.properties << 'E'
           distributionBase=GRADLE_USER_HOME
@@ -680,6 +685,15 @@ jobs:
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
           distributionUrl=https\://services.gradle.org/distributions/gradle-8.2-all.zip
+          E
+
+      - name: Force compileSdk in gradle.properties
+        run: |
+          cat >> android/gradle.properties << 'E'
+
+          android.useAndroidX=true
+          android.enableJetifier=true
+          org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
           E
 
       - name: Patch manifest
@@ -710,27 +724,6 @@ jobs:
               </application>
           </manifest>
           XML
-
-      - name: Patch build.gradle for plugin compatibility
-        run: |
-          cat >> android/build.gradle << 'E'
-
-          subprojects {
-              afterEvaluate { project ->
-                  if (project.hasProperty('android')) {
-                      project.android {
-                          if (compileSdkVersion == null) {
-                              compileSdkVersion 34
-                          }
-                          if (defaultConfig != null) {
-                              if (defaultConfig.targetSdkVersion == null) defaultConfig.targetSdkVersion 34
-                              if (defaultConfig.minSdkVersion == null) defaultConfig.minSdkVersion 24
-                          }
-                      }
-                  }
-              }
-          }
-          E
 
       - run: flutter pub get
       - run: flutter build apk --release
