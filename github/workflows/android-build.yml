@@ -10,44 +10,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
+        with: { distribution: temurin, java-version: '17' }
       - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: 3.24.0
-          channel: stable
-          cache: true
+        with: { flutter-version: 3.24.0, channel: stable, cache: true }
 
-      - name: Reset pubspec
+      - name: Write pubspec
         run: |
           cat > pubspec.yaml << 'P'
           name: mobile_tv_studio
           publish_to: 'none'
           version: 0.1.0+1
-          environment:
-            sdk: '>=3.4.0 <4.0.0'
-          dependencies:
-            flutter:
-              sdk: flutter
-          dev_dependencies:
-            flutter_test:
-              sdk: flutter
-          flutter:
-            uses-material-design: true
+          environment: { sdk: '>=3.4.0 <4.0.0' }
+          dependencies: { flutter: { sdk: flutter } }
+          dev_dependencies: { flutter_test: { sdk: flutter } }
+          flutter: { uses-material-design: true }
           P
           rm -f pubspec.lock
 
-      - name: Reset lib to minimal working app
+      - name: Write app files
         run: |
           rm -rf lib test
-          mkdir -p lib
+          mkdir -p lib/screens lib/widgets
+
           cat > lib/main.dart << 'D'
           import 'package:flutter/material.dart';
           import 'package:flutter/services.dart';
+          import 'screens/role_chooser.dart';
 
           void main() async {
             WidgetsFlutterBinding.ensureInitialized();
@@ -55,6 +44,7 @@ jobs:
               DeviceOrientation.landscapeLeft,
               DeviceOrientation.landscapeRight,
             ]);
+            await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
             runApp(const App());
           }
 
@@ -65,56 +55,727 @@ jobs:
               return MaterialApp(
                 debugShowCheckedModeBanner: false,
                 title: 'Mobile TV Studio',
-                theme: ThemeData.dark(useMaterial3: true),
-                home: const Home(),
+                theme: ThemeData(
+                  useMaterial3: true,
+                  brightness: Brightness.dark,
+                  scaffoldBackgroundColor: const Color(0xFF0A0A0A),
+                  colorScheme: const ColorScheme.dark(
+                    primary: Color(0xFF3B82F6),
+                    surface: Color(0xFF141414),
+                  ),
+                ),
+                home: const RoleChooser(),
               );
             }
           }
+          D
 
-          class Home extends StatelessWidget {
-            const Home({super.key});
+          cat > lib/widgets/big_button.dart << 'D'
+          import 'package:flutter/material.dart';
+
+          class BigButton extends StatelessWidget {
+            final IconData icon;
+            final String label;
+            final Color color;
+            final VoidCallback onTap;
+            final double size;
+            const BigButton({
+              super.key,
+              required this.icon,
+              required this.label,
+              required this.onTap,
+              this.color = const Color(0xFF3B82F6),
+              this.size = 90,
+            });
             @override
             Widget build(BuildContext context) {
-              return Scaffold(
-                backgroundColor: const Color(0xFF0A0A0A),
-                body: SafeArea(
+              return InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  width: size, height: size,
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.12),
+                    border: Border.all(color: color, width: 1.5),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                   child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Container(
-                        height: 36,
-                        color: const Color(0xFF141414),
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: const Row(
-                          children: [
-                            Text('MOBILE TV STUDIO',
-                              style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 3)),
-                          ],
-                        ),
-                      ),
-                      Expanded(
-                        child: Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Container(
-                                width: 100, height: 100,
-                                decoration: const BoxDecoration(color: Color(0xFFEF4444), shape: BoxShape.circle),
-                                child: const Icon(Icons.play_arrow, color: Colors.white, size: 60),
-                              ),
-                              const SizedBox(height: 24),
-                              const Text('BUILD SUCCESSFUL',
-                                style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900, letterSpacing: 4)),
-                              const SizedBox(height: 8),
-                              const Text('App is running. Ready for features.',
-                                style: TextStyle(color: Colors.white54, fontSize: 12)),
-                            ],
-                          ),
-                        ),
-                      ),
+                      Icon(icon, color: color, size: size * 0.32),
+                      const SizedBox(height: 6),
+                      Text(label,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: color, fontSize: 10,
+                          fontWeight: FontWeight.w900, letterSpacing: 1.5)),
                     ],
                   ),
                 ),
               );
+            }
+          }
+          D
+
+          cat > lib/widgets/status_badge.dart << 'D'
+          import 'package:flutter/material.dart';
+
+          class StatusBadge extends StatelessWidget {
+            final String label;
+            final Color color;
+            final IconData icon;
+            const StatusBadge({super.key, required this.label, required this.color, this.icon = Icons.circle});
+            @override
+            Widget build(BuildContext context) {
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.15),
+                  border: Border.all(color: color.withOpacity(0.6)),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(icon, size: 12, color: color),
+                  const SizedBox(width: 6),
+                  Text(label, style: TextStyle(color: color, fontSize: 10,
+                    fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+                ]),
+              );
+            }
+          }
+          D
+
+          cat > lib/screens/role_chooser.dart << 'D'
+          import 'package:flutter/material.dart';
+          import 'director_screen.dart';
+          import 'camera_screen.dart';
+
+          class RoleChooser extends StatelessWidget {
+            const RoleChooser({super.key});
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                body: SafeArea(
+                  child: SingleChildScrollView(
+                    physics: const ClampingScrollPhysics(),
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const SizedBox(height: 40),
+                        const Text('MOBILE TV STUDIO',
+                          style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: 4)),
+                        const SizedBox(height: 8),
+                        const Text('What is this phone?',
+                          style: TextStyle(fontSize: 14, color: Colors.white54)),
+                        const SizedBox(height: 32),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _card(context, Icons.videocam, 'CAMERA', 'Send live video', const Color(0xFFEF4444), () {
+                              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CameraScreen()));
+                            }),
+                            const SizedBox(width: 20),
+                            _card(context, Icons.dashboard, 'DIRECTOR', 'Control broadcast', const Color(0xFF3B82F6), () {
+                              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DirectorScreen()));
+                            }),
+                            const SizedBox(width: 20),
+                            _card(context, Icons.all_inclusive, 'BOTH', 'Send and control', const Color(0xFF8B5CF6), () {
+                              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DirectorScreen()));
+                            }),
+                          ],
+                        ),
+                        const SizedBox(height: 40),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            Widget _card(BuildContext context, IconData icon, String title, String sub, Color color, VoidCallback onTap) {
+              return InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  width: 160, height: 180,
+                  decoration: BoxDecoration(
+                    color: Colors.white10,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: color.withOpacity(0.5), width: 2),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(icon, size: 48, color: color),
+                      const SizedBox(height: 12),
+                      Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: 2)),
+                      const SizedBox(height: 6),
+                      Text(sub, style: const TextStyle(color: Colors.white54, fontSize: 10)),
+                    ],
+                  ),
+                ),
+              );
+            }
+          }
+          D
+
+          cat > lib/screens/camera_screen.dart << 'D'
+          import 'package:flutter/material.dart';
+          import '../widgets/big_button.dart';
+          import '../widgets/status_badge.dart';
+
+          class CameraScreen extends StatefulWidget {
+            const CameraScreen({super.key});
+            @override
+            State<CameraScreen> createState() => _CameraScreenState();
+          }
+
+          class _CameraScreenState extends State<CameraScreen> {
+            bool _live = false;
+            String _quality = '720p';
+            int _fps = 30;
+            bool _front = false;
+
+            void _cycleQ() => setState(() {
+              _quality = _quality == '720p' ? '480p' : _quality == '480p' ? '360p' : '720p';
+            });
+            void _cycleFps() => setState(() {
+              const opts = [24, 25, 30, 35, 60];
+              _fps = opts[(opts.indexOf(_fps) + 1) % opts.length];
+            });
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(
+                  title: const Text('CAMERA NODE',
+                    style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)),
+                  backgroundColor: const Color(0xFF141414),
+                  actions: [
+                    Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: Center(
+                        child: StatusBadge(
+                          label: '$_quality • ${_fps}fps • ${_live ? "WIFI" : "OFFLINE"}',
+                          color: _live ? const Color(0xFF22C55E) : Colors.grey,
+                          icon: _live ? Icons.wifi : Icons.cloud_off,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                body: Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        margin: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.black,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: _live ? const Color(0xFFEF4444) : Colors.white12, width: _live ? 3 : 1),
+                        ),
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(_live ? Icons.videocam : Icons.videocam_off,
+                                size: 64, color: _live ? const Color(0xFFEF4444) : Colors.white24),
+                              const SizedBox(height: 12),
+                              Text(_live ? 'PREVIEW LIVE' : 'CAMERA IDLE',
+                                style: TextStyle(color: _live ? const Color(0xFFEF4444) : Colors.white38,
+                                  fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 3)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    Container(
+                      width: 180,
+                      color: const Color(0xFF141414),
+                      padding: const EdgeInsets.all(10),
+                      child: SingleChildScrollView(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            BigButton(icon: _live ? Icons.stop : Icons.play_arrow,
+                              label: _live ? 'STOP' : 'GO LIVE',
+                              color: _live ? const Color(0xFFEF4444) : const Color(0xFF22C55E),
+                              size: 88,
+                              onTap: () => setState(() => _live = !_live)),
+                            const SizedBox(height: 12),
+                            BigButton(icon: Icons.high_quality, label: _quality,
+                              onTap: _cycleQ, size: 72),
+                            const SizedBox(height: 12),
+                            BigButton(icon: Icons.speed, label: '$_fps FPS',
+                              color: Colors.tealAccent, onTap: _cycleFps, size: 72),
+                            const SizedBox(height: 12),
+                            BigButton(icon: Icons.flip_camera_android,
+                              label: _front ? 'FRONT' : 'REAR',
+                              color: const Color(0xFF8B5CF6), size: 72,
+                              onTap: () => setState(() => _front = !_front)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+          }
+          D
+
+          cat > lib/screens/director_screen.dart << 'D'
+          import 'dart:async';
+          import 'package:flutter/material.dart';
+
+          const _bg = Color(0xFF0A0A0A);
+          const _panel = Color(0xFF141414);
+          const _border = Color(0x14FFFFFF);
+          const _red = Color(0xFFEF4444);
+          const _green = Color(0xFF22C55E);
+          const _yellow = Color(0xFFF5C542);
+          const _blue = Color(0xFF3B82F6);
+          const _textMid = Color(0x99FFFFFF);
+
+          class DirectorScreen extends StatefulWidget {
+            const DirectorScreen({super.key});
+            @override State<DirectorScreen> createState() => _DS();
+          }
+
+          class _Cam {
+            final String name;
+            bool live;
+            bool preview;
+            _Cam(this.name, {this.live = false, this.preview = false});
+          }
+
+          class _DS extends State<DirectorScreen> {
+            bool _onAir = true;
+            bool _menu = false;
+            int _tab = 0;
+            int _sec = 208;
+            Timer? _ticker;
+            final _cams = [
+              _Cam('CAM 1', live: true),
+              _Cam('CAM 2', preview: true),
+              _Cam('CAM 3'), _Cam('CAM 4'), _Cam('CAM 5'), _Cam('CAM 6'),
+            ];
+            final _vols = [0.7, 0.8, 0.6, 0.9, 0.5, 0.7];
+            final _inputs = ['MIC', 'USB', 'BT', 'WIRED', 'MIC', 'USB'];
+            final _mutes = List<bool>.filled(6, false);
+
+            @override
+            void initState() {
+              super.initState();
+              _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+                if (mounted) setState(() => _sec++);
+              });
+            }
+
+            @override
+            void dispose() { _ticker?.cancel(); super.dispose(); }
+
+            String get _time {
+              final h = (_sec ~/ 3600).toString().padLeft(2, '0');
+              final m = ((_sec ~/ 60) % 60).toString().padLeft(2, '0');
+              final s = (_sec % 60).toString().padLeft(2, '0');
+              return '$h:$m:$s';
+            }
+
+            String get _live => _cams.firstWhere((c) => c.live, orElse: () => _cams[0]).name;
+            String get _prev => _cams.firstWhere((c) => c.preview, orElse: () => _cams[1]).name;
+
+            void _take() => setState(() {
+              final l = _cams.indexWhere((c) => c.live);
+              final p = _cams.indexWhere((c) => c.preview);
+              if (l >= 0 && p >= 0) {
+                _cams[l].live = false; _cams[l].preview = true;
+                _cams[p].preview = false; _cams[p].live = true;
+              }
+            });
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                backgroundColor: _bg,
+                body: SafeArea(
+                  child: Stack(children: [
+                    Column(children: [
+                      _statusBar(),
+                      _camStrip(),
+                      _tabs(),
+                      Expanded(child: _center()),
+                      _audio(),
+                      _actionBar(),
+                    ]),
+                    if (_menu) _menuPanel(),
+                  ]),
+                ),
+              );
+            }
+
+            Widget _statusBar() => Container(
+              height: 48,
+              color: _bg,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(children: [
+                Container(width: 8, height: 8, decoration: BoxDecoration(
+                  color: _onAir ? _red : _textMid, shape: BoxShape.circle)),
+                const SizedBox(width: 8),
+                Text(_onAir ? 'ON AIR' : 'OFFLINE',
+                  style: TextStyle(color: _onAir ? _red : _textMid,
+                    fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 2)),
+                const SizedBox(width: 12),
+                Container(width: 1, height: 20, color: _border),
+                const SizedBox(width: 12),
+                const Icon(Icons.videocam, color: Colors.white, size: 14),
+                const SizedBox(width: 5),
+                Text(_live, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                const SizedBox(width: 2),
+                const Icon(Icons.keyboard_arrow_down, color: Colors.white, size: 14),
+                const SizedBox(width: 12),
+                const Text('720p  30 FPS', style: TextStyle(color: _textMid, fontSize: 10, letterSpacing: 1)),
+                const Spacer(),
+                const Icon(Icons.access_time, color: Colors.white, size: 13),
+                const SizedBox(width: 5),
+                Text(_time, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                const SizedBox(width: 14),
+                const Icon(Icons.sd_storage, color: Colors.white, size: 13),
+                const SizedBox(width: 5),
+                const Text('24 MB', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                const SizedBox(width: 14),
+                const Icon(Icons.wifi, color: _green, size: 14),
+                const SizedBox(width: 12),
+                GestureDetector(
+                  onTap: () => setState(() => _menu = !_menu),
+                  child: const Icon(Icons.menu, color: Colors.white, size: 20)),
+              ]),
+            );
+
+            Widget _camStrip() {
+              final items = <Widget>[];
+              for (var i = 0; i < _cams.length; i++) items.add(Expanded(child: _camTile(_cams[i], i)));
+              items.add(Expanded(child: _addTile()));
+              return Container(
+                height: 88, color: _bg,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(children: items),
+              );
+            }
+
+            Widget _camTile(_Cam c, int i) {
+              final b = c.live ? _red : c.preview ? _yellow : _border;
+              final bw = (c.live || c.preview) ? 2.0 : 1.0;
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 3),
+                child: GestureDetector(
+                  onTap: () => setState(() {
+                    for (final x in _cams) x.preview = false;
+                    c.preview = true;
+                  }),
+                  onDoubleTap: () => setState(() {
+                    for (final x in _cams) { x.live = false; x.preview = false; }
+                    c.live = true;
+                  }),
+                  child: Container(
+                    decoration: BoxDecoration(color: Colors.black,
+                      border: Border.all(color: b, width: bw),
+                      borderRadius: BorderRadius.circular(4)),
+                    child: Stack(children: [
+                      Positioned(top: 5, left: 5, child: Container(
+                        width: 6, height: 6,
+                        decoration: BoxDecoration(
+                          color: c.live ? _red : c.preview ? _yellow : _textMid,
+                          shape: BoxShape.circle))),
+                      if (c.live) Positioned(top: 5, right: 5, child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(2)),
+                        child: const Text('LIVE', style: TextStyle(color: Colors.white, fontSize: 7, fontWeight: FontWeight.w900, letterSpacing: 1)))),
+                      Positioned(left: 5, bottom: 5, child: Text(c.name,
+                        style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1))),
+                    ]),
+                  ),
+                ),
+              );
+            }
+
+            Widget _addTile() => Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 3),
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: _textMid, width: 1)),
+                child: const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Icon(Icons.add, color: Colors.white70, size: 18),
+                  SizedBox(height: 2),
+                  Text('Add Camera', style: TextStyle(color: Colors.white70, fontSize: 8)),
+                ]),
+              ),
+            );
+
+            Widget _tabs() => Container(
+              height: 30, color: _bg,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(children: [
+                _tab('PROGRAM', 0), const SizedBox(width: 24), _tab('MULTIVIEW', 1),
+              ]),
+            );
+
+            Widget _tab(String l, int i) => GestureDetector(
+              onTap: () => setState(() => _tab = i),
+              child: Text(l, style: TextStyle(
+                color: _tab == i ? Colors.white : _textMid,
+                fontSize: 10,
+                fontWeight: _tab == i ? FontWeight.w900 : FontWeight.w600,
+                letterSpacing: 2)));
+
+            Widget _center() {
+              if (_tab == 1) return _grid();
+              return _program();
+            }
+
+            Widget _program() => Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+              child: LayoutBuilder(builder: (context, cons) {
+                final pW = cons.maxWidth;
+                final pH = pW * 9 / 16;
+                final h = pH > cons.maxHeight ? cons.maxHeight : pH;
+                final w = pH > cons.maxHeight ? cons.maxHeight * 16 / 9 : pW;
+                return Center(child: SizedBox(width: w, height: h,
+                  child: Container(
+                    decoration: BoxDecoration(color: Colors.black,
+                      border: Border.all(color: _yellow, width: 1.5),
+                      borderRadius: BorderRadius.circular(4)),
+                    child: Stack(children: [
+                      Center(child: Text(_live,
+                        style: const TextStyle(color: Colors.white24, fontSize: 32, fontWeight: FontWeight.w900, letterSpacing: 4))),
+                      Positioned(top: 8, left: 8, child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(3)),
+                        child: const Text('PROGRAM', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 2)))),
+                      Positioned(right: 10, bottom: 10, width: w * 0.30, height: w * 0.30 * 9 / 16,
+                        child: Container(
+                          decoration: BoxDecoration(color: Colors.black,
+                            border: Border.all(color: _yellow, width: 1.5),
+                            borderRadius: BorderRadius.circular(3)),
+                          child: Stack(children: [
+                            Center(child: Text(_prev,
+                              style: const TextStyle(color: Colors.white24, fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 2))),
+                            Positioned(top: 5, left: 5, child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                              decoration: BoxDecoration(color: _yellow, borderRadius: BorderRadius.circular(2)),
+                              child: const Text('PREVIEW', style: TextStyle(color: Colors.black, fontSize: 7, fontWeight: FontWeight.w900, letterSpacing: 1)))),
+                            Positioned(left: 5, bottom: 5, child: Text(_prev,
+                              style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w700))),
+                          ]),
+                        )),
+                    ]),
+                  )));
+              }),
+            );
+
+            Widget _grid() => Padding(
+              padding: const EdgeInsets.all(12),
+              child: GridView.builder(
+                itemCount: _cams.length,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3, mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 16 / 9),
+                itemBuilder: (_, i) {
+                  final c = _cams[i];
+                  final b = c.live ? _red : c.preview ? _yellow : _border;
+                  return GestureDetector(
+                    onTap: () => setState(() {
+                      for (final x in _cams) x.preview = false;
+                      c.preview = true;
+                    }),
+                    child: Container(
+                      decoration: BoxDecoration(color: Colors.black,
+                        border: Border.all(color: b, width: 1.5),
+                        borderRadius: BorderRadius.circular(4)),
+                      child: Center(child: Text(c.name,
+                        style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 2))),
+                    ));
+                },
+              ),
+            );
+
+            Widget _audio() => Container(
+              height: 92, color: _bg,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(children: List.generate(6, (i) => Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(6, 5, 6, 5),
+                    decoration: BoxDecoration(color: _panel,
+                      border: Border.all(color: _border),
+                      borderRadius: BorderRadius.circular(4)),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                      Row(children: [
+                        Container(width: 5, height: 5, decoration: const BoxDecoration(color: _green, shape: BoxShape.circle)),
+                        const SizedBox(width: 4),
+                        Text('CH ${i + 1}', style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1)),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                          decoration: BoxDecoration(color: _blue.withOpacity(0.20), borderRadius: BorderRadius.circular(2)),
+                          child: Text(_inputs[i], style: const TextStyle(color: _blue, fontSize: 7, fontWeight: FontWeight.w900))),
+                      ]),
+                      const SizedBox(height: 3),
+                      Expanded(child: Row(children: [
+                        Container(width: 5,
+                          decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(2)),
+                          child: Align(alignment: Alignment.bottomCenter,
+                            child: FractionallySizedBox(
+                              heightFactor: _mutes[i] ? 0.0 : _vols[i],
+                              child: Container(decoration: BoxDecoration(
+                                gradient: const LinearGradient(begin: Alignment.bottomCenter, end: Alignment.topCenter,
+                                  colors: [_green, _yellow]),
+                                borderRadius: BorderRadius.circular(2)))))),
+                        const SizedBox(width: 4),
+                        Expanded(child: SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            trackHeight: 2, activeTrackColor: _textMid, inactiveTrackColor: _border,
+                            thumbColor: Colors.white,
+                            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+                            overlayShape: const RoundSliderOverlayShape(overlayRadius: 8)),
+                          child: Slider(
+                            value: _mutes[i] ? 0.0 : _vols[i],
+                            onChanged: (v) => setState(() => _vols[i] = v)))),
+                      ])),
+                      const SizedBox(height: 3),
+                      Row(children: [
+                        Expanded(child: GestureDetector(
+                          onTap: () => setState(() => _mutes[i] = !_mutes[i]),
+                          child: Container(height: 18,
+                            decoration: BoxDecoration(
+                              color: _mutes[i] ? _red : Colors.black,
+                              borderRadius: BorderRadius.circular(3),
+                              border: Border.all(color: _border)),
+                            child: Center(child: Text('M', style: TextStyle(
+                              color: _mutes[i] ? Colors.white : _textMid,
+                              fontSize: 9, fontWeight: FontWeight.w900)))))),
+                        const SizedBox(width: 4),
+                        Expanded(child: Container(height: 18,
+                          decoration: BoxDecoration(color: Colors.black,
+                            borderRadius: BorderRadius.circular(3),
+                            border: Border.all(color: _border)),
+                          child: const Center(child: Text('S', style: TextStyle(
+                            color: _textMid, fontSize: 9, fontWeight: FontWeight.w900))))),
+                      ]),
+                    ]),
+                  )),
+              ))),
+            );
+
+            Widget _actionBar() => Container(
+              height: 56, color: _bg,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(children: [
+                GestureDetector(
+                  onTap: () => setState(() => _onAir = !_onAir),
+                  child: Container(
+                    height: 40,
+                    padding: const EdgeInsets.symmetric(horizontal: 18),
+                    decoration: BoxDecoration(
+                      color: _onAir ? _red : const Color(0xFF1E293B),
+                      borderRadius: BorderRadius.circular(6)),
+                    child: Row(children: [
+                      Icon(_onAir ? Icons.stop_circle : Icons.podcasts, color: Colors.white, size: 18),
+                      const SizedBox(width: 8),
+                      Text(_onAir ? 'END STREAM' : 'GO LIVE',
+                        style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 1.5)),
+                    ]),
+                  ),
+                ),
+                const Spacer(),
+                Container(height: 40,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(color: _panel,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: _border)),
+                  child: Row(children: [
+                    const Icon(Icons.storage, color: Colors.white70, size: 14),
+                    const SizedBox(width: 8),
+                    const Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('DATA BUDGET', style: TextStyle(color: _textMid, fontSize: 7, fontWeight: FontWeight.w800, letterSpacing: 1.5)),
+                      Text('24 MB', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)),
+                    ]),
+                    const SizedBox(width: 10),
+                    SizedBox(width: 50, child: ClipRRect(
+                      borderRadius: BorderRadius.circular(2),
+                      child: const LinearProgressIndicator(value: 0.24, minHeight: 4,
+                        backgroundColor: Colors.black, valueColor: AlwaysStoppedAnimation(_green)))),
+                  ])),
+                const SizedBox(width: 10),
+                Container(height: 40,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(color: _panel,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: _border)),
+                  child: const Row(children: [
+                    Icon(Icons.picture_in_picture_alt, color: Colors.white, size: 16),
+                    SizedBox(width: 6),
+                    Text('PiP', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                  ])),
+                const SizedBox(width: 10),
+                GestureDetector(
+                  onTap: _take,
+                  child: Container(
+                    height: 40,
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(6)),
+                    child: const Row(children: [
+                      Icon(Icons.fiber_manual_record, color: Colors.white, size: 12),
+                      SizedBox(width: 8),
+                      Text('TAKE', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 3)),
+                    ]),
+                  ),
+                ),
+              ]),
+            );
+
+            Widget _menuPanel() {
+              final items = <List<dynamic>>[
+                [Icons.title, 'Titles'], [Icons.layers, 'Graphics'], [Icons.campaign, 'Ads'],
+                [Icons.bookmark_border, 'Templates'], [Icons.monitor_heart, 'Diagnostics'],
+                [Icons.account_circle, 'Accounts'], [Icons.key, 'Stream Targets'],
+                [Icons.schedule, 'Schedule'], [Icons.video_library, 'Recordings'], [Icons.settings, 'Settings'],
+              ];
+              return Positioned(top: 0, right: 0, bottom: 0,
+                child: Container(width: 240, color: _bg,
+                  child: Column(children: [
+                    Container(height: 48,
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: _border))),
+                      child: Row(children: [
+                        const Text('Menu', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800)),
+                        const Spacer(),
+                        GestureDetector(onTap: () => setState(() => _menu = false),
+                          child: const Icon(Icons.close, color: Colors.white, size: 18)),
+                      ])),
+                    Expanded(child: ListView.builder(
+                      itemCount: items.length,
+                      itemBuilder: (_, i) => InkWell(
+                        onTap: () {
+                          setState(() => _menu = false);
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text('${items[i][1]} — opens soon'),
+                            duration: const Duration(seconds: 1)));
+                        },
+                        child: SizedBox(height: 42,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            child: Row(children: [
+                              Icon(items[i][0] as IconData, color: Colors.white70, size: 16),
+                              const SizedBox(width: 12),
+                              Text(items[i][1] as String,
+                                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+                            ]),
+                          ))),
+                    )),
+                  ]),
+                ));
             }
           }
           D
@@ -125,7 +786,7 @@ jobs:
           flutter create --platforms=android --org com.yourcompany --project-name mobile_tv_studio .
           rm -f pubspec.lock
 
-      - name: Force Gradle 8.2 wrapper
+      - name: Force Gradle 8.2
         run: |
           cat > android/gradle/wrapper/gradle-wrapper.properties << 'E'
           distributionBase=GRADLE_USER_HOME
