@@ -2,7 +2,7 @@ name: Build
 on: [push, workflow_dispatch]
 
 jobs:
-  android:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,27 +14,27 @@ jobs:
       - name: Setup
         run: |
           rm -rf lib test android
-          mkdir -p lib/screens lib/services lib/widgets assets/icon
+          mkdir -p lib/screens lib/widgets lib/services assets/icon
           cat > pubspec.yaml << 'P'
           name: mobile_tv_studio
           publish_to: 'none'
           version: 1.0.0+1
-          environment: {sdk: '>=3.4.0 <4.0.0'}
+          environment:
+            sdk: '>=3.4.0 <4.0.0'
           dependencies:
-            flutter: {sdk: flutter}
-            shared_preferences: ^2.3.2
-            uuid: ^4.5.0
-            path_provider: ^2.1.4
+            flutter:
+              sdk: flutter
             camera: ^0.11.0+2
-            flutter_webrtc: ^0.11.7
-            web_socket_channel: ^3.0.1
+            shared_preferences: ^2.3.2
           dev_dependencies:
-            flutter_test: {sdk: flutter}
+            flutter_test:
+              sdk: flutter
             flutter_launcher_icons: ^0.13.1
             flutter_native_splash: ^2.4.1
           flutter:
             uses-material-design: true
-            assets: [assets/icon/]
+            assets:
+              - assets/icon/
           flutter_launcher_icons:
             android: true
             ios: false
@@ -47,7 +47,9 @@ jobs:
             web: false
             color: "#0A0A0F"
             image: "assets/icon/app_icon.png"
-            android_12: {color: "#0A0A0F", image: "assets/icon/app_icon.png"}
+            android_12:
+              color: "#0A0A0F"
+              image: "assets/icon/app_icon.png"
           P
           pip install Pillow > /dev/null 2>&1
           python3 << 'PY'
@@ -60,641 +62,1034 @@ jobs:
           try:
               f1=ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',100)
               f2=ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',68)
-          except: f1=f2=ImageFont.load_default()
+          except Exception:
+              f1=f2=ImageFont.load_default()
           d.text((512,800),'MOBILE TV',fill=(255,255,255,255),anchor='mm',font=f1)
           d.text((512,900),'STUDIO',fill=(239,68,68,255),anchor='mm',font=f2)
           img.save('assets/icon/app_icon.png')
           PY
 
-      - name: Config
+      - name: Write main.dart
         run: |
-          cat > lib/services/config.dart << 'D'
-          class AppConfig {
-            static const String signalingUrl = 'wss://mobile-tv-studio.onrender.com';
-            static const String roomId = 'studio1';
-          }
-          D
+          cat > lib/main.dart << 'D'
+          import 'package:flutter/material.dart';
+          import 'package:flutter/services.dart';
+          import 'screens/role_chooser.dart';
 
-      - name: Signaling
-        run: |
-          cat > lib/services/signaling.dart << 'D'
-          import 'dart:async';
-          import 'dart:convert';
-          import 'package:web_socket_channel/web_socket_channel.dart';
-          enum SignalType { offer, answer, candidate, join, leave }
-          class SignalMessage {
-            final SignalType type; final String room, from, sdp, mid; final int mline;
-            SignalMessage({required this.type, required this.room, required this.from,
-              this.sdp='', this.mid='', this.mline=0});
-            Map<String,dynamic> toJson()=>{'type':type.name,'room':room,'from':from,'sdp':sdp,'mid':mid,'mline':mline};
-            factory SignalMessage.fromJson(Map<String,dynamic> j)=>SignalMessage(
-              type:SignalType.values.firstWhere((t)=>t.name==j['type'],orElse:()=>SignalType.candidate),
-              room:j['room']??'',from:j['from']??'',sdp:j['sdp']??'',mid:j['mid']??'',mline:j['mline']??0);
+          void main() async {
+            WidgetsFlutterBinding.ensureInitialized();
+            await SystemChrome.setPreferredOrientations([
+              DeviceOrientation.landscapeLeft,
+              DeviceOrientation.landscapeRight,
+            ]);
+            runApp(const App());
           }
-          class SignalingClient {
-            final String serverUrl, roomId, clientId;
-            SignalingClient({required this.serverUrl,required this.roomId,required this.clientId});
-            WebSocketChannel? _c;
-            final _s = StreamController<SignalMessage>.broadcast();
-            Stream<SignalMessage> get messages => _s.stream;
-            Future<bool> connect() async {
-              try {
-                _c = WebSocketChannel.connect(Uri.parse(serverUrl));
-                await _c!.ready;
-                _c!.stream.listen((raw){
-                  try { _s.add(SignalMessage.fromJson(jsonDecode(raw as String))); } catch(_){}
-                }, onError:(_){});
-                send(SignalMessage(type:SignalType.join,room:roomId,from:clientId));
-                return true;
-              } catch(_){ return false; }
-            }
-            void send(SignalMessage m){ try { _c?.sink.add(jsonEncode(m.toJson())); } catch(_){} }
-            Future<void> disconnect() async {
-              send(SignalMessage(type:SignalType.leave,room:roomId,from:clientId));
-              await _c?.sink.close();
-              await _s.close();
+
+          class App extends StatelessWidget {
+            const App({super.key});
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                debugShowCheckedModeBanner: false,
+                title: 'Mobile TV Studio',
+                theme: ThemeData(
+                  useMaterial3: true,
+                  brightness: Brightness.dark,
+                  scaffoldBackgroundColor: const Color(0xFF0A0A0F),
+                ),
+                home: const RoleChooser(),
+              );
             }
           }
           D
 
-      - name: WebRTC
-        run: |
-          cat > lib/services/webrtc_session.dart << 'D'
-          import 'dart:async';
-          import 'package:flutter/foundation.dart';
-          import 'package:flutter_webrtc/flutter_webrtc.dart';
-          import 'signaling.dart';
-          class WebRtcSession {
-            final String serverUrl, roomId, clientId; final bool isCaller;
-            WebRtcSession({required this.serverUrl,required this.roomId,
-              required this.clientId,required this.isCaller});
-            RTCPeerConnection? _pc; MediaStream? _local;
-            SignalingClient? _sig; StreamSubscription<SignalMessage>? _sub;
-            final _r = RTCVideoRenderer(); bool _ready = false;
-            RTCVideoRenderer get renderer => _r;
-            MediaStream? get localStream => _local;
-            bool get ready => _ready;
-            Future<bool> start() async {
-              try {
-                if (!_ready) { await _r.initialize(); _ready = true; }
-                _pc = await createPeerConnection({
-                  'iceServers':[{'urls':'stun:stun.l.google.com:19302'},
-                                {'urls':'stun:stun1.l.google.com:19302'}],
-                  'sdpSemantics':'unified-plan','iceTransportPolicy':'all'});
-                _pc!.onIceCandidate = (c) { _sig?.send(SignalMessage(
-                  type:SignalType.candidate, room:roomId, from:clientId,
-                  sdp:c.candidate ?? '', mid:c.sdpMid ?? '',
-                  mline:c.sdpMLineIndex ?? 0)); };
-                _pc!.onTrack = (e) { if (e.streams.isNotEmpty) _r.srcObject = e.streams[0]; };
-                _local = await navigator.mediaDevices.getUserMedia({
-                  'audio':true,
-                  'video':{'facingMode':'environment','width':{'ideal':854},
-                    'height':{'ideal':480},'frameRate':{'ideal':24}}});
-                for (final t in _local!.getTracks()) { await _pc!.addTrack(t, _local!); }
-                _sig = SignalingClient(serverUrl:serverUrl,roomId:roomId,clientId:clientId);
-                if (!await _sig!.connect()) return false;
-                _sub = _sig!.messages.listen(_onSignal);
-                if (isCaller) {
-                  final o = await _pc!.createOffer();
-                  await _pc!.setLocalDescription(o);
-                  _sig!.send(SignalMessage(type:SignalType.offer,room:roomId,
-                    from:clientId,sdp:o.sdp ?? ''));
-                }
-                return true;
-              } catch(e){ debugPrint('webrtc: $e'); return false; }
-            }
-            Future<void> _onSignal(SignalMessage m) async {
-              if (m.from == clientId) return;
-              if (m.type == SignalType.offer) {
-                await _pc!.setRemoteDescription(RTCSessionDescription(m.sdp,'offer'));
-                final a = await _pc!.createAnswer();
-                await _pc!.setLocalDescription(a);
-                _sig!.send(SignalMessage(type:SignalType.answer,room:roomId,
-                  from:clientId,sdp:a.sdp ?? ''));
-              } else if (m.type == SignalType.answer) {
-                await _pc!.setRemoteDescription(RTCSessionDescription(m.sdp,'answer'));
-              } else if (m.type == SignalType.candidate) {
-                await _pc!.addCandidate(RTCIceCandidate(m.sdp,m.mid,m.mline));
-              }
-            }
-            Future<void> stop() async {
-              await _sub?.cancel(); await _sig?.disconnect();
-              for (final t in _local?.getTracks() ?? <MediaStreamTrack>[]) { await t.stop(); }
-              await _local?.dispose();
-              await _pc?.close(); await _pc?.dispose();
-              _pc = null; _local = null;
-            }
-          }
-          D
-
-      - name: Camera widget
+      - name: Write camera widget
         run: |
           cat > lib/widgets/live_camera.dart << 'D'
           import 'package:camera/camera.dart';
           import 'package:flutter/material.dart';
+
           class LiveCamera extends StatefulWidget {
             final bool front;
             const LiveCamera({super.key, this.front = false});
-            @override State<LiveCamera> createState() => _LC();
+            @override
+            State<LiveCamera> createState() => _LiveCameraState();
           }
-          class _LC extends State<LiveCamera> with WidgetsBindingObserver {
-            CameraController? _c; bool _r = false; String? _e;
-            @override void initState() {
+
+          class _LiveCameraState extends State<LiveCamera> {
+            CameraController? _ctrl;
+            bool _ready = false;
+            String? _error;
+
+            @override
+            void initState() {
               super.initState();
-              WidgetsBinding.instance.addObserver(this);
               _init();
             }
+
             Future<void> _init() async {
               try {
-                final cs = await availableCameras();
-                if (cs.isEmpty) { setState(()=>_e='No cameras'); return; }
-                final l = widget.front ? CameraLensDirection.front : CameraLensDirection.back;
-                final cam = cs.firstWhere((c)=>c.lensDirection==l, orElse:()=>cs.first);
-                _c = CameraController(cam, ResolutionPreset.high, enableAudio: true);
-                await _c!.initialize();
-                if (mounted) setState(()=>_r=true);
-              } catch(e){ if (mounted) setState(()=>_e=e.toString()); }
+                final cams = await availableCameras();
+                if (cams.isEmpty) {
+                  setState(() => _error = 'No cameras');
+                  return;
+                }
+                final lens = widget.front
+                    ? CameraLensDirection.front
+                    : CameraLensDirection.back;
+                final cam = cams.firstWhere(
+                  (c) => c.lensDirection == lens,
+                  orElse: () => cams.first,
+                );
+                _ctrl = CameraController(cam, ResolutionPreset.high, enableAudio: true);
+                await _ctrl!.initialize();
+                if (mounted) setState(() => _ready = true);
+              } catch (e) {
+                if (mounted) setState(() => _error = e.toString());
+              }
             }
-            @override void didUpdateWidget(covariant LiveCamera o) {
-              super.didUpdateWidget(o);
-              if (o.front != widget.front) { _c?.dispose(); _r=false; _init(); }
-            }
-            @override void didChangeAppLifecycleState(AppLifecycleState s) {
-              if (s==AppLifecycleState.inactive) { _c?.dispose(); _r=false; }
-              else if (s==AppLifecycleState.resumed) { _init(); }
-            }
-            @override void dispose() {
-              WidgetsBinding.instance.removeObserver(this);
-              _c?.dispose(); super.dispose();
-            }
+
             @override
-            Widget build(BuildContext c) {
-              if (_e != null) return Container(color:Colors.black,
-                child:Center(child:Text(_e!,style:const TextStyle(color:Colors.redAccent,fontSize:11))));
-              if (!_r || _c == null) return Container(color:Colors.black,
-                child:const Center(child:CircularProgressIndicator(color:Colors.redAccent)));
-              final f = _c!.description.lensDirection == CameraLensDirection.front;
-              return RotatedBox(quarterTurns: f?3:1, child: CameraPreview(_c!));
+            void didUpdateWidget(covariant LiveCamera old) {
+              super.didUpdateWidget(old);
+              if (old.front != widget.front) {
+                _ctrl?.dispose();
+                _ready = false;
+                _init();
+              }
+            }
+
+            @override
+            void dispose() {
+              _ctrl?.dispose();
+              super.dispose();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              if (_error != null) {
+                return Container(
+                  color: Colors.black,
+                  child: Center(
+                    child: Text(_error!,
+                      style: const TextStyle(color: Colors.redAccent, fontSize: 11)),
+                  ),
+                );
+              }
+              if (!_ready || _ctrl == null) {
+                return Container(
+                  color: Colors.black,
+                  child: const Center(
+                    child: CircularProgressIndicator(color: Colors.redAccent)),
+                );
+              }
+              final isFront = _ctrl!.description.lensDirection ==
+                  CameraLensDirection.front;
+              return RotatedBox(
+                quarterTurns: isFront ? 3 : 1,
+                child: CameraPreview(_ctrl!),
+              );
             }
           }
           D
 
-      - name: Camera screen
+      - name: Write camera screen
         run: |
           cat > lib/screens/camera_screen.dart << 'D'
           import 'package:flutter/material.dart';
           import '../widgets/live_camera.dart';
-          import '../services/webrtc_session.dart';
-          import '../services/config.dart';
+
           class CameraScreen extends StatefulWidget {
             const CameraScreen({super.key});
-            @override State<CameraScreen> createState() => _S();
+            @override
+            State<CameraScreen> createState() => _CameraScreenState();
           }
-          class _S extends State<CameraScreen> {
-            bool _live = false, _front = false;
-            String _q = '720p'; int _fps = 30; String _st = 'OFFLINE';
-            WebRtcSession? _sess;
-            Future<void> _toggle() async {
-              if (_live) { await _sess?.stop();
-                setState((){_live=false;_st='OFFLINE';});
-              } else {
-                setState(()=>_st='CONNECTING');
-                final s = WebRtcSession(serverUrl:AppConfig.signalingUrl,
-                  roomId:AppConfig.roomId,
-                  clientId:'cam_${DateTime.now().millisecondsSinceEpoch}',
-                  isCaller:true);
-                final ok = await s.start();
-                if (ok) { _sess=s; setState((){_live=true;_st='LIVE';}); }
-                else { setState(()=>_st='RELAY OFFLINE'); }
-              }
+
+          class _CameraScreenState extends State<CameraScreen> {
+            bool _live = false;
+            bool _front = false;
+            String _quality = '720p';
+            int _fps = 30;
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                backgroundColor: const Color(0xFF0A0A0F),
+                appBar: AppBar(
+                  title: const Text('CAMERA NODE',
+                    style: TextStyle(fontSize: 14, letterSpacing: 3,
+                      fontWeight: FontWeight.w900)),
+                  backgroundColor: const Color(0xFF141418),
+                  actions: [
+                    Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: Center(
+                        child: Text(
+                          '$_quality - ${_fps}fps - ${_live ? "LIVE" : "OFFLINE"}',
+                          style: TextStyle(
+                            color: _live ? Colors.green : Colors.grey,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                body: Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        margin: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.black,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: _live ? Colors.red : Colors.white24,
+                            width: _live ? 3 : 1,
+                          ),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: LiveCamera(front: _front),
+                        ),
+                      ),
+                    ),
+                    Container(
+                      width: 160,
+                      color: const Color(0xFF141418),
+                      padding: const EdgeInsets.all(8),
+                      child: SingleChildScrollView(
+                        child: Column(
+                          children: [
+                            _btn(
+                              _live ? Icons.stop : Icons.play_arrow,
+                              _live ? 'STOP' : 'GO LIVE',
+                              _live ? Colors.red : Colors.green,
+                              78,
+                              () => setState(() => _live = !_live),
+                            ),
+                            const SizedBox(height: 8),
+                            _btn(Icons.high_quality, _quality, Colors.blue, 64, () {
+                              setState(() {
+                                if (_quality == '720p') _quality = '480p';
+                                else if (_quality == '480p') _quality = '360p';
+                                else _quality = '720p';
+                              });
+                            }),
+                            const SizedBox(height: 8),
+                            _btn(Icons.speed, '$_fps FPS', Colors.tealAccent, 64, () {
+                              setState(() {
+                                final opts = [24, 25, 30, 35, 60];
+                                _fps = opts[(opts.indexOf(_fps) + 1) % opts.length];
+                              });
+                            }),
+                            const SizedBox(height: 8),
+                            _btn(Icons.flip_camera_android,
+                              _front ? 'FRONT' : 'REAR',
+                              Colors.purpleAccent, 64,
+                              () => setState(() => _front = !_front)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
             }
-            @override void dispose() { _sess?.stop(); super.dispose(); }
-            @override Widget build(BuildContext c) => Scaffold(
-              backgroundColor: const Color(0xFF0A0A0F),
-              appBar: AppBar(
-                title: const Text('CAMERA NODE', style: TextStyle(fontSize:14,letterSpacing:3,fontWeight:FontWeight.w900)),
-                backgroundColor: const Color(0xFF141418),
-                actions: [Padding(padding: const EdgeInsets.only(right:12),
-                  child: Center(child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal:10,vertical:5),
-                    decoration: BoxDecoration(color: (_live?Colors.green:Colors.grey).withOpacity(0.15),
-                      border: Border.all(color: (_live?Colors.green:Colors.grey).withOpacity(0.6)),
-                      borderRadius: BorderRadius.circular(20)),
-                    child: Text('$_q - ${_fps}fps - $_st',
-                      style: TextStyle(color: _live?Colors.green:Colors.grey,fontSize:10,
-                        fontWeight:FontWeight.w800,letterSpacing:1.2)))))],
-              ),
-              body: Row(children: [
-                Expanded(child: Container(margin: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(color:Colors.black,borderRadius:BorderRadius.circular(8),
-                    border: Border.all(color:_live?Colors.red:Colors.white24,width:_live?3:1)),
-                  child: ClipRRect(borderRadius:BorderRadius.circular(6),
-                    child: LiveCamera(front:_front)))),
-                Container(width:160,color:const Color(0xFF141418),padding:const EdgeInsets.all(8),
-                  child: SingleChildScrollView(child: Column(children:[
-                    _btn(_live?Icons.stop:Icons.play_arrow, _live?'STOP':'GO LIVE',
-                      _live?Colors.red:Colors.green, _toggle, 78),
-                    const SizedBox(height:8),
-                    _btn(Icons.high_quality, _q, Colors.blue, () => setState(()=>
-                      _q = _q=='720p'?'480p':_q=='480p'?'360p':'720p'), 64),
-                    const SizedBox(height:8),
-                    _btn(Icons.speed, '$_fps FPS', Colors.tealAccent, () => setState(()=>_fps=[24,25,30,35,60][([24,25,30,35,60].indexOf(_fps)+1)%5]), 64),
-                    const SizedBox(height:8),
-                    _btn(Icons.flip_camera_android, _front?'FRONT':'REAR',
-                      Colors.purpleAccent, () => setState(()=>_front=!_front), 64),
-                  ]))),
-              ]));
-            Widget _btn(IconData i, String l, Color c, VoidCallback t, double s) => InkWell(
-              onTap: t, borderRadius: BorderRadius.circular(8),
-              child: Container(width:s,height:s,
-                decoration: BoxDecoration(color:c.withOpacity(0.12),
-                  border: Border.all(color:c,width:1.5),borderRadius:BorderRadius.circular(8)),
-                child: Column(mainAxisAlignment: MainAxisAlignment.center, children:[
-                  Icon(i,color:c,size:s*0.32), const SizedBox(height:4),
-                  Text(l,textAlign:TextAlign.center,style:TextStyle(color:c,fontSize:9,
-                    fontWeight:FontWeight.w900,letterSpacing:1))])));
+
+            Widget _btn(IconData icon, String label, Color color, double size,
+                VoidCallback onTap) {
+              return InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  width: size,
+                  height: size,
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.12),
+                    border: Border.all(color: color, width: 1.5),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(icon, color: color, size: size * 0.32),
+                      const SizedBox(height: 4),
+                      Text(label, textAlign: TextAlign.center,
+                        style: TextStyle(color: color, fontSize: 9,
+                          fontWeight: FontWeight.w900, letterSpacing: 1)),
+                    ],
+                  ),
+                ),
+              );
+            }
           }
           D
 
-      - name: Director screen
+      - name: Write director screen
         run: |
           cat > lib/screens/director_screen.dart << 'D'
           import 'dart:async';
           import 'package:flutter/material.dart';
           import 'package:flutter_webrtc/flutter_webrtc.dart';
-          import '../services/webrtc_session.dart';
-          import '../services/config.dart';
 
           const _bg = Color(0xFF0A0A0F);
-          const _p = Color(0xFF141418);
-          const _b = Color(0x14FFFFFF);
-          const _r = Color(0xFFEF4444);
-          const _g = Color(0xFF22C55E);
-          const _y = Color(0xFFF5C542);
-          const _bl = Color(0xFF3B82F6);
-          const _t = Color(0x99FFFFFF);
+          const _panel = Color(0xFF141418);
+          const _red = Color(0xFFEF4444);
+          const _green = Color(0xFF22C55E);
+          const _yellow = Color(0xFFF5C542);
+          const _blue = Color(0xFF3B82F6);
+          const _grey = Color(0x14FFFFFF);
 
           class DirectorScreen extends StatefulWidget {
             const DirectorScreen({super.key});
-            @override State<DirectorScreen> createState() => _S();
+            @override
+            State<DirectorScreen> createState() => _DirectorScreenState();
           }
-          class _S extends State<DirectorScreen> {
-            bool _on = true, _menu = false;
-            int _tab = 0, _sec = 0, _n = 6;
-            Timer? _tick;
-            List<bool> _live = List.filled(6,false);
-            List<bool> _prev = List.filled(6,false);
-            WebRtcSession? _sess;
-            String _conn = 'OFFLINE';
 
-            @override void initState() {
+          class _DirectorScreenState extends State<DirectorScreen> {
+            bool _onAir = false;
+            bool _menuOpen = false;
+            int _tab = 0;
+            int _seconds = 0;
+            int _camCount = 6;
+            Timer? _ticker;
+            final List<bool> _live = List.generate(15, (i) => i == 0);
+            final List<bool> _preview = List.generate(15, (i) => i == 1);
+            final _remote = RTCVideoRenderer();
+            bool _remoteReady = false;
+
+            @override
+            void initState() {
               super.initState();
-              _live[0]=true; _prev[1]=true;
-              _tick = Timer.periodic(const Duration(seconds:1),(_){ if(mounted) setState(()=>_sec++); });
-              _connect();
+              _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+                if (mounted) setState(() => _seconds++);
+              });
+              _initRemote();
             }
-            Future<void> _connect() async {
-              setState(()=>_conn='CONNECTING');
-              final s = WebRtcSession(serverUrl:AppConfig.signalingUrl,
-                roomId:AppConfig.roomId,
-                clientId:'dir_${DateTime.now().millisecondsSinceEpoch}',isCaller:false);
-              final ok = await s.start();
-              if (ok) { _sess=s; setState(()=>_conn='CONNECTED'); }
-              else { setState(()=>_conn='RELAY OFFLINE'); }
+
+            Future<void> _initRemote() async {
+              try {
+                await _remote.initialize();
+                if (mounted) setState(() => _remoteReady = true);
+              } catch (_) {}
             }
-            @override void dispose() { _tick?.cancel(); _sess?.stop(); super.dispose(); }
-            String get _tstr {
-              final h=(_sec~/3600).toString().padLeft(2,'0');
-              final m=((_sec~/60)%60).toString().padLeft(2,'0');
-              final s=(_sec%60).toString().padLeft(2,'0');
+
+            @override
+            void dispose() {
+              _ticker?.cancel();
+              _remote.dispose();
+              super.dispose();
+            }
+
+            String get _time {
+              final h = (_seconds ~/ 3600).toString().padLeft(2, '0');
+              final m = ((_seconds ~/ 60) % 60).toString().padLeft(2, '0');
+              final s = (_seconds % 60).toString().padLeft(2, '0');
               return '$h:$m:$s';
             }
-            void _take() => setState((){
-              final l = _live.indexWhere((x)=>x);
-              final p = _prev.indexWhere((x)=>x);
-              if (l>=0 && p>=0) { _live[l]=false; _prev[l]=true; _prev[p]=false; _live[p]=true; }
-            });
-            void _add() => setState((){
-              if (_n>=15) return;
-              _n++; _live.add(false); _prev.add(false);
-            });
-            Future<void> _remove(int i) async {
-              if (_n<=1) return;
-              final ok = await showDialog<bool>(context: context,
-                builder:(ctx)=>AlertDialog(backgroundColor:_p,
-                  title:const Text('Remove camera?'),
-                  content:Text('Remove CAM ${i+1}?'),
-                  actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('CANCEL')),
-                    FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('REMOVE'))]));
-              if (ok==true) setState((){
-                _n--; _live.removeAt(i); _prev.removeAt(i);
-                if (!_live.contains(true) && _live.isNotEmpty) _live[0]=true;
-                if (!_prev.contains(true) && _prev.length>1) _prev[1]=true;
+
+            void _take() {
+              setState(() {
+                final liveIdx = _live.indexOf(true);
+                final previewIdx = _preview.indexOf(true);
+                if (liveIdx < 0 || previewIdx < 0) return;
+                _live[liveIdx] = false;
+                _preview[liveIdx] = true;
+                _preview[previewIdx] = false;
+                _live[previewIdx] = true;
               });
             }
+
+            void _selectPreview(int i) {
+              setState(() {
+                for (var k = 0; k < _camCount; k++) _preview[k] = false;
+                _preview[i] = true;
+              });
+            }
+
+            void _setLive(int i) {
+              setState(() {
+                for (var k = 0; k < _camCount; k++) {
+                  _live[k] = false;
+                  _preview[k] = false;
+                }
+                _live[i] = true;
+              });
+            }
+
+            void _addCamera() {
+              if (_camCount >= 15) return;
+              setState(() => _camCount++);
+            }
+
+            Future<void> _removeCamera(int i) async {
+              if (_camCount <= 1) return;
+              final ok = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  backgroundColor: _panel,
+                  title: const Text('Remove camera?'),
+                  content: Text('Remove CAM ${i + 1}?'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('CANCEL'),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: const Text('REMOVE'),
+                    ),
+                  ],
+                ),
+              );
+              if (ok != true) return;
+              setState(() {
+                _camCount--;
+                if (!_live.sublist(0, _camCount).contains(true) && _camCount > 0) {
+                  _live[0] = true;
+                }
+                if (!_preview.sublist(0, _camCount).contains(true) && _camCount > 1) {
+                  _preview[1] = true;
+                }
+              });
+            }
+
             Future<void> _pickCount() async {
-              final s = await showModalBottomSheet<int>(context:context,
-                backgroundColor:_p, isScrollControlled:true,
-                builder:(ctx)=>SafeArea(child:SizedBox(
-                  height:MediaQuery.of(ctx).size.height*0.75,
-                  child:Column(children:[
-                    const Padding(padding:EdgeInsets.all(16),
-                      child:Text('NUMBER OF CAMERAS',style:TextStyle(color:Colors.white70,
-                        fontSize:12,letterSpacing:3,fontWeight:FontWeight.w800))),
-                    const Divider(height:1,color:Colors.white12),
-                    Expanded(child:ListView.builder(itemCount:15,
-                      itemBuilder:(_,i){
-                        final n=i+1;
-                        return ListTile(
-                          title:Text('$n camera${n==1?"":"s"}',style:const TextStyle(color:Colors.white)),
-                          trailing:n==_n?const Icon(Icons.check,color:Colors.tealAccent):null,
-                          onTap:()=>Navigator.pop(ctx,n));
-                      }))])));
-              if (s!=null) setState((){
-                _n=s;
-                while(_live.length<_n){_live.add(false);_prev.add(false);}
-                while(_live.length>_n){_live.removeLast();_prev.removeLast();}
-                if(!_live.contains(true)) _live[0]=true;
-              });
+              final choice = await showModalBottomSheet<int>(
+                context: context,
+                backgroundColor: _panel,
+                builder: (ctx) => SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text('NUMBER OF CAMERAS',
+                          style: TextStyle(color: Colors.white70,
+                            fontSize: 12, letterSpacing: 3,
+                            fontWeight: FontWeight.w800)),
+                      ),
+                      Expanded(
+                        child: ListView.builder(
+                          itemCount: 15,
+                          itemBuilder: (_, i) {
+                            final n = i + 1;
+                            return ListTile(
+                              title: Text('$n camera${n == 1 ? "" : "s"}',
+                                style: const TextStyle(color: Colors.white)),
+                              trailing: n == _camCount
+                                  ? const Icon(Icons.check, color: Colors.tealAccent)
+                                  : null,
+                              onTap: () => Navigator.pop(ctx, n),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+              if (choice != null) setState(() => _camCount = choice);
             }
-            @override Widget build(BuildContext c) => Scaffold(backgroundColor:_bg,
-              body: SafeArea(child:Stack(children:[
-                Column(children:[_top(),_strip(),_tabs(),
-                  Expanded(child:_tab==1?_grid():_program()),_audio(),_bar()]),
-                if(_menu)_menuPanel()])));
-            Widget _top() => Container(height:40,color:_bg,
-              padding:const EdgeInsets.symmetric(horizontal:10),
-              child:Row(children:[
-                Container(width:7,height:7,decoration:BoxDecoration(
-                  color:_on?_r:_t,shape:BoxShape.circle)),const SizedBox(width:6),
-                Text(_on?'ON AIR':'OFFLINE',style:TextStyle(color:_on?_r:_t,fontSize:10,
-                  fontWeight:FontWeight.w900,letterSpacing:2)),
-                const SizedBox(width:8),
-                Container(padding:const EdgeInsets.symmetric(horizontal:5,vertical:2),
-                  decoration:BoxDecoration(color:_bl.withOpacity(0.20),borderRadius:BorderRadius.circular(3)),
-                  child:Text('$_n CAMS',style:const TextStyle(color:_bl,fontSize:8,
-                    fontWeight:FontWeight.w900,letterSpacing:1))),
-                const SizedBox(width:10),
-                Container(width:1,height:16,color:_b),const SizedBox(width:10),
-                Text(_conn,style:TextStyle(color:_conn=='CONNECTED'?_g:Colors.orangeAccent,
-                  fontSize:9,letterSpacing:1)),
-                const Spacer(),
-                Text(_tstr,style:const TextStyle(color:Colors.white,fontSize:10,fontWeight:FontWeight.w700)),
-                const SizedBox(width:10),
-                GestureDetector(onTap:()=>setState(()=>_menu=!_menu),
-                  child:const Icon(Icons.menu,color:Colors.white,size:18))]));
-            Widget _strip() {
-              final items=<Widget>[];
-              for(var i=0;i<_n;i++) items.add(Expanded(child:_tile(i)));
-              items.add(SizedBox(width:48,child:_addTile()));
-              return Container(height:64,color:_bg,padding:const EdgeInsets.symmetric(horizontal:10),
-                child:Row(children:items));
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                backgroundColor: _bg,
+                body: SafeArea(
+                  child: Stack(
+                    children: [
+                      Column(
+                        children: [
+                          _statusBar(),
+                          _cameraStrip(),
+                          _tabRow(),
+                          Expanded(child: _tab == 1 ? _grid() : _program()),
+                          _actionBar(),
+                        ],
+                      ),
+                      if (_menuOpen) _menuPanel(),
+                    ],
+                  ),
+                ),
+              );
             }
-            Widget _tile(int i) {
-              final b = _live[i]?_r:_prev[i]?_y:_b;
-              final bw = (_live[i]||_prev[i])?2.0:1.0;
-              return Padding(padding:const EdgeInsets.symmetric(horizontal:2),
-                child:GestureDetector(
-                  onTap:()=>setState((){for(var k=0;k<_n;k++)_prev[k]=false;_prev[i]=true;}),
-                  onDoubleTap:()=>setState((){for(var k=0;k<_n;k++){_live[k]=false;_prev[k]=false;}_live[i]=true;}),
-                  onLongPress:()=>_remove(i),
-                  child:Container(decoration:BoxDecoration(color:Colors.black,
-                    border:Border.all(color:b,width:bw),borderRadius:BorderRadius.circular(3)),
-                    child:Stack(children:[
-                      Positioned(top:3,left:3,child:Container(width:5,height:5,
-                        decoration:BoxDecoration(color:_live[i]?_r:_prev[i]?_y:_t,shape:BoxShape.circle))),
-                      if(_live[i])Positioned(top:3,right:3,child:Container(
-                        padding:const EdgeInsets.symmetric(horizontal:4,vertical:1),
-                        decoration:BoxDecoration(color:_r,borderRadius:BorderRadius.circular(2)),
-                        child:const Text('LIVE',style:TextStyle(color:Colors.white,fontSize:6,
-                          fontWeight:FontWeight.w900,letterSpacing:1)))),
-                      Positioned(left:4,bottom:3,child:Text('CAM ${i+1}',
-                        style:const TextStyle(color:Colors.white,fontSize:7,
-                          fontWeight:FontWeight.w900,letterSpacing:1)))]))));
+
+            Widget _statusBar() {
+              return Container(
+                height: 40,
+                color: _bg,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: _onAir ? _red : Colors.grey,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      _onAir ? 'ON AIR' : 'OFFLINE',
+                      style: TextStyle(
+                        color: _onAir ? _red : Colors.grey,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: _blue.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                      child: Text(
+                        '$_camCount CAMS',
+                        style: const TextStyle(
+                          color: _blue,
+                          fontSize: 8,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      _time,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    GestureDetector(
+                      onTap: () => setState(() => _menuOpen = !_menuOpen),
+                      child: const Icon(Icons.menu, color: Colors.white, size: 18),
+                    ),
+                  ],
+                ),
+              );
             }
-            Widget _addTile() => Padding(padding:const EdgeInsets.symmetric(horizontal:2),
-              child:GestureDetector(onTap:_add,
-                child:Container(decoration:BoxDecoration(
-                  borderRadius:BorderRadius.circular(3),
-                  border:Border.all(color:Colors.tealAccent,width:1)),
-                  child:const Column(mainAxisAlignment:MainAxisAlignment.center,children:[
-                    Icon(Icons.add,color:Colors.tealAccent,size:18),SizedBox(height:2),
-                    Text('Add',style:TextStyle(color:Colors.tealAccent,fontSize:7))]))));
-            Widget _tabs() => Container(height:24,color:_bg,padding:const EdgeInsets.symmetric(horizontal:10),
-              child:Row(children:[
-                GestureDetector(onTap:()=>setState(()=>_tab=0),child:Text('PROGRAM',
-                  style:TextStyle(color:_tab==0?Colors.white:_t,fontSize:9,
-                    fontWeight:_tab==0?FontWeight.w900:FontWeight.w600,letterSpacing:2))),
-                const SizedBox(width:20),
-                GestureDetector(onTap:()=>setState(()=>_tab=1),child:Text('MULTIVIEW',
-                  style:TextStyle(color:_tab==1?Colors.white:_t,fontSize:9,
-                    fontWeight:_tab==1?FontWeight.w900:FontWeight.w600,letterSpacing:2)))]));
-            Widget _program() => Padding(padding:const EdgeInsets.fromLTRB(10,2,10,2),
-              child:Container(decoration:BoxDecoration(color:Colors.black,
-                border:Border.all(color:_y,width:1.5),borderRadius:BorderRadius.circular(4)),
-                child:LayoutBuilder(builder:(ctx,cons){
-                  final w=cons.maxWidth;
-                  final rem = _sess!=null && _sess!.renderer.srcObject!=null;
-                  final feed = rem
-                    ? Positioned.fill(child:RTCVideoView(_sess!.renderer,mirror:false,
-                        objectFit:RTCVideoViewObjectFit.RTCVideoViewObjectFitCover))
-                    : Center(child:Column(mainAxisAlignment:MainAxisAlignment.center,children:[
-                        const Icon(Icons.videocam_off,color:Colors.white24,size:32),
-                        const SizedBox(height:6),
-                        Text(_conn=='RELAY OFFLINE'?'WAITING FOR CAMERA':'CONNECTING',
-                          style:const TextStyle(color:Colors.white38,fontSize:10,letterSpacing:2))]));
-                  return Stack(children:[feed,
-                    Positioned(top:6,left:6,child:Container(
-                      padding:const EdgeInsets.symmetric(horizontal:6,vertical:2),
-                      decoration:BoxDecoration(color:_r,borderRadius:BorderRadius.circular(2)),
-                      child:const Text('PROGRAM',style:TextStyle(color:Colors.white,
-                        fontSize:8,fontWeight:FontWeight.w900,letterSpacing:1.5)))),
-                    Positioned(right:8,bottom:8,width:w*0.28,height:w*0.28*9/16,
-                      child:Container(decoration:BoxDecoration(color:Colors.black,
-                        border:Border.all(color:_y,width:1.5),borderRadius:BorderRadius.circular(3)),
-                        child:Stack(children:[
-                          Center(child:Text('CAM ${_prev.indexOf(true)+1}',
-                            style:const TextStyle(color:Colors.white24,fontSize:11,
-                              fontWeight:FontWeight.w900,letterSpacing:2))),
-                          Positioned(top:3,left:3,child:Container(
-                            padding:const EdgeInsets.symmetric(horizontal:4,vertical:1),
-                            decoration:BoxDecoration(color:_y,borderRadius:BorderRadius.circular(2)),
-                            child:const Text('PREVIEW',style:TextStyle(color:Colors.black,
-                              fontSize:6,fontWeight:FontWeight.w900,letterSpacing:1))))]))]);
-                })));
+
+            Widget _cameraStrip() {
+              final items = <Widget>[];
+              for (var i = 0; i < _camCount; i++) {
+                items.add(Expanded(child: _camTile(i)));
+              }
+              items.add(SizedBox(width: 48, child: _addTile()));
+              return Container(
+                height: 64,
+                color: _bg,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Row(children: items),
+              );
+            }
+
+            Widget _camTile(int i) {
+              final isLive = _live[i];
+              final isPreview = _preview[i];
+              final borderColor = isLive ? _red : isPreview ? _yellow : _grey;
+              final borderWidth = (isLive || isPreview) ? 2.0 : 1.0;
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: GestureDetector(
+                  onTap: () => _selectPreview(i),
+                  onDoubleTap: () => _setLive(i),
+                  onLongPress: () => _removeCamera(i),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black,
+                      border: Border.all(color: borderColor, width: borderWidth),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: Stack(
+                      children: [
+                        Positioned(
+                          top: 3,
+                          left: 3,
+                          child: Container(
+                            width: 5,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: isLive
+                                  ? _red
+                                  : isPreview
+                                      ? _yellow
+                                      : Colors.grey,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ),
+                        if (isLive)
+                          Positioned(
+                            top: 3,
+                            right: 3,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: _red,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                              child: const Text(
+                                'LIVE',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 6,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1,
+                                ),
+                              ),
+                            ),
+                          ),
+                        Positioned(
+                          left: 4,
+                          bottom: 3,
+                          child: Text(
+                            'CAM ${i + 1}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 7,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            Widget _addTile() {
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: GestureDetector(
+                  onTap: _addCamera,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(3),
+                      border: Border.all(color: Colors.tealAccent, width: 1),
+                    ),
+                    child: const Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.add, color: Colors.tealAccent, size: 18),
+                        SizedBox(height: 2),
+                        Text('Add',
+                          style: TextStyle(color: Colors.tealAccent, fontSize: 7)),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            Widget _tabRow() {
+              return Container(
+                height: 24,
+                color: _bg,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Row(
+                  children: [
+                    _tabButton('PROGRAM', 0),
+                    const SizedBox(width: 20),
+                    _tabButton('MULTIVIEW', 1),
+                  ],
+                ),
+              );
+            }
+
+            Widget _tabButton(String label, int index) {
+              final active = _tab == index;
+              return GestureDetector(
+                onTap: () => setState(() => _tab = index),
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: active ? Colors.white : Colors.white54,
+                    fontSize: 9,
+                    fontWeight: active ? FontWeight.w900 : FontWeight.w600,
+                    letterSpacing: 2,
+                  ),
+                ),
+              );
+            }
+
+            Widget _program() {
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(10, 2, 10, 2),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.black,
+                    border: Border.all(color: _yellow, width: 1.5),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: LayoutBuilder(
+                    builder: (context, cons) {
+                      final w = cons.maxWidth;
+                      final hasRemote = _remoteReady && _remote.srcObject != null;
+                      return Stack(
+                        children: [
+                          if (hasRemote)
+                            Positioned.fill(
+                              child: RTCVideoView(
+                                _remote,
+                                mirror: false,
+                                objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                              ),
+                            )
+                          else
+                            const Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.videocam_off,
+                                    color: Colors.white24, size: 32),
+                                  SizedBox(height: 6),
+                                  Text('WAITING FOR CAMERA',
+                                    style: TextStyle(color: Colors.white38,
+                                      fontSize: 10, letterSpacing: 2)),
+                                ],
+                              ),
+                            ),
+                          Positioned(
+                            top: 6,
+                            left: 6,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: _red,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                              child: const Text('PROGRAM',
+                                style: TextStyle(color: Colors.white, fontSize: 8,
+                                  fontWeight: FontWeight.w900, letterSpacing: 1.5)),
+                            ),
+                          ),
+                          Positioned(
+                            right: 8,
+                            bottom: 8,
+                            width: w * 0.28,
+                            height: w * 0.28 * 9 / 16,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.black,
+                                border: Border.all(color: _yellow, width: 1.5),
+                                borderRadius: BorderRadius.circular(3),
+                              ),
+                              child: Stack(
+                                children: [
+                                  Center(
+                                    child: Text(
+                                      'CAM ${_preview.indexOf(true) + 1}',
+                                      style: const TextStyle(
+                                        color: Colors.white24, fontSize: 11,
+                                        fontWeight: FontWeight.w900, letterSpacing: 2),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    top: 3,
+                                    left: 3,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 4, vertical: 1),
+                                      decoration: BoxDecoration(
+                                        color: _yellow,
+                                        borderRadius: BorderRadius.circular(2),
+                                      ),
+                                      child: const Text('PREVIEW',
+                                        style: TextStyle(color: Colors.black,
+                                          fontSize: 6, fontWeight: FontWeight.w900,
+                                          letterSpacing: 1)),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              );
+            }
+
             Widget _grid() {
-              final cols = _n<=2?2:_n<=4?2:_n<=6?3:_n<=9?3:_n<=12?4:5;
-              return Padding(padding:const EdgeInsets.all(10),
-                child:GridView.builder(itemCount:_n,
-                  gridDelegate:SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount:cols,mainAxisSpacing:6,crossAxisSpacing:6,
-                    childAspectRatio:16/9),
-                  itemBuilder:(_,i){
-                    final b = _live[i]?_r:_prev[i]?_y:_b;
+              final cols = _camCount <= 2
+                  ? 2
+                  : _camCount <= 4
+                      ? 2
+                      : _camCount <= 6
+                          ? 3
+                          : _camCount <= 9
+                              ? 3
+                              : _camCount <= 12
+                                  ? 4
+                                  : 5;
+              return Padding(
+                padding: const EdgeInsets.all(10),
+                child: GridView.builder(
+                  itemCount: _camCount,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: cols,
+                    mainAxisSpacing: 6,
+                    crossAxisSpacing: 6,
+                    childAspectRatio: 16 / 9,
+                  ),
+                  itemBuilder: (_, i) {
+                    final isLive = _live[i];
+                    final isPreview = _preview[i];
+                    final borderColor = isLive ? _red : isPreview ? _yellow : _grey;
                     return GestureDetector(
-                      onTap:()=>setState((){for(var k=0;k<_n;k++)_prev[k]=false;_prev[i]=true;}),
-                      onLongPress:()=>_remove(i),
-                      child:Container(decoration:BoxDecoration(color:Colors.black,
-                        border:Border.all(color:b,width:1.5),borderRadius:BorderRadius.circular(3)),
-                        child:Center(child:Text('CAM ${i+1}',style:const TextStyle(
-                          color:Colors.white70,fontSize:10,fontWeight:FontWeight.w800,letterSpacing:2)))));
-                  }));
+                      onTap: () => _selectPreview(i),
+                      onLongPress: () => _removeCamera(i),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black,
+                          border: Border.all(color: borderColor, width: 1.5),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Center(
+                          child: Text(
+                            'CAM ${i + 1}',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 2,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              );
             }
-            Widget _audio() => Container(height:64,color:_bg,padding:const EdgeInsets.symmetric(horizontal:10),
-              child:Row(children:List.generate(_n,(i)=>Expanded(
-                child:Padding(padding:const EdgeInsets.symmetric(horizontal:2),
-                  child:Container(padding:const EdgeInsets.fromLTRB(5,3,5,3),
-                    decoration:BoxDecoration(color:_p,border:Border.all(color:_b),
-                      borderRadius:BorderRadius.circular(3)),
-                    child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
-                      Row(children:[Container(width:4,height:4,
-                        decoration:const BoxDecoration(color:_g,shape:BoxShape.circle)),
-                        const SizedBox(width:3),
-                        Text('CH ${i+1}',style:const TextStyle(color:Colors.white,fontSize:7,
-                          fontWeight:FontWeight.w900,letterSpacing:1))]),
-                      const SizedBox(height:4),
-                      const Expanded(child:SizedBox()),
-                      Container(height:14,decoration:BoxDecoration(color:Colors.black,
-                        borderRadius:BorderRadius.circular(2),border:Border.all(color:_b)),
-                        child:const Center(child:Text('M',style:TextStyle(color:_t,fontSize:8,
-                          fontWeight:FontWeight.w900))))]))))));
-            Widget _bar() => Container(height:48,color:_bg,padding:const EdgeInsets.symmetric(horizontal:10),
-              child:Row(children:[
-                GestureDetector(onTap:()=>setState(()=>_on=!_on),
-                  child:Container(height:36,padding:const EdgeInsets.symmetric(horizontal:14),
-                    decoration:BoxDecoration(color:_on?_r:const Color(0xFF1E293B),
-                      borderRadius:BorderRadius.circular(5)),
-                    child:Row(children:[
-                      Icon(_on?Icons.stop_circle:Icons.podcasts,color:Colors.white,size:16),
-                      const SizedBox(width:6),
-                      Text(_on?'END STREAM':'GO LIVE',style:const TextStyle(color:Colors.white,
-                        fontSize:11,fontWeight:FontWeight.w900,letterSpacing:1.2))]))),
-                const Spacer(),
-                GestureDetector(onTap:_take,
-                  child:Container(height:36,padding:const EdgeInsets.symmetric(horizontal:20),
-                    decoration:BoxDecoration(color:_r,borderRadius:BorderRadius.circular(5)),
-                    child:const Row(children:[Icon(Icons.fiber_manual_record,color:Colors.white,size:10),
-                      SizedBox(width:6),
-                      Text('TAKE',style:TextStyle(color:Colors.white,fontSize:12,
-                        fontWeight:FontWeight.w900,letterSpacing:2.5))])))]));
+
+            Widget _actionBar() {
+              return Container(
+                height: 48,
+                color: _bg,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Row(
+                  children: [
+                    GestureDetector(
+                      onTap: () => setState(() => _onAir = !_onAir),
+                      child: Container(
+                        height: 36,
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        decoration: BoxDecoration(
+                          color: _onAir ? _red : const Color(0xFF1E293B),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(_onAir ? Icons.stop_circle : Icons.podcasts,
+                              color: Colors.white, size: 16),
+                            const SizedBox(width: 6),
+                            Text(
+                              _onAir ? 'END STREAM' : 'GO LIVE',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    GestureDetector(
+                      onTap: _take,
+                      child: Container(
+                        height: 36,
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        decoration: BoxDecoration(
+                          color: _red,
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.fiber_manual_record,
+                              color: Colors.white, size: 10),
+                            SizedBox(width: 6),
+                            Text('TAKE',
+                              style: TextStyle(color: Colors.white, fontSize: 12,
+                                fontWeight: FontWeight.w900, letterSpacing: 2.5)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+
             Widget _menuPanel() {
-              final items = <List<dynamic>>[
-                [Icons.grid_view,'Camera Count',(ctx)=>_pickCount()],
-                [Icons.videocam,'Add Camera',(ctx)=>_add()],
-              ];
-              return Positioned(top:0,right:0,bottom:0,
-                child:Container(width:220,color:_bg,
-                  child:Column(children:[
-                    Container(height:40,padding:const EdgeInsets.symmetric(horizontal:12),
-                      decoration:const BoxDecoration(border:Border(bottom:BorderSide(color:_b))),
-                      child:Row(children:[const Text('Menu',style:TextStyle(color:Colors.white,
-                        fontSize:12,fontWeight:FontWeight.w800)),const Spacer(),
-                        GestureDetector(onTap:()=>setState(()=>_menu=false),
-                          child:const Icon(Icons.close,color:Colors.white,size:16))])),
-                    Expanded(child:ListView.builder(itemCount:items.length,
-                      itemBuilder:(_,i){
-                        final it = items[i];
-                        return InkWell(onTap:(){ setState(()=>_menu=false); (it[2] as Function)(context); },
-                          child:SizedBox(height:38,child:Padding(
-                            padding:const EdgeInsets.symmetric(horizontal:12),
-                            child:Row(children:[Icon(it[0] as IconData,color:Colors.white70,size:14),
-                              const SizedBox(width:10),
-                              Text(it[1] as String,style:const TextStyle(color:Colors.white,
-                                fontSize:11,fontWeight:FontWeight.w600))]))));
-                      }))])));
+              return Positioned(
+                top: 0,
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  width: 220,
+                  color: _bg,
+                  child: Column(
+                    children: [
+                      Container(
+                        height: 40,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: const BoxDecoration(
+                          border: Border(bottom: BorderSide(color: _grey)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Text('Menu',
+                              style: TextStyle(color: Colors.white,
+                                fontSize: 12, fontWeight: FontWeight.w800)),
+                            const Spacer(),
+                            GestureDetector(
+                              onTap: () => setState(() => _menuOpen = false),
+                              child: const Icon(Icons.close,
+                                color: Colors.white, size: 16),
+                            ),
+                          ],
+                        ),
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.grid_view, color: Colors.white70, size: 16),
+                        title: const Text('Camera Count',
+                          style: TextStyle(color: Colors.white, fontSize: 11)),
+                        onTap: () {
+                          setState(() => _menuOpen = false);
+                          _pickCount();
+                        },
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.add, color: Colors.white70, size: 16),
+                        title: const Text('Add Camera',
+                          style: TextStyle(color: Colors.white, fontSize: 11)),
+                        onTap: () {
+                          setState(() => _menuOpen = false);
+                          _addCamera();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              );
             }
           }
           D
 
-      - name: Role chooser + main
+      - name: Write role chooser
         run: |
           cat > lib/screens/role_chooser.dart << 'D'
           import 'package:flutter/material.dart';
           import 'director_screen.dart';
           import 'camera_screen.dart';
+
           class RoleChooser extends StatelessWidget {
             const RoleChooser({super.key});
-            @override Widget build(BuildContext c) => Scaffold(
-              backgroundColor: const Color(0xFF0A0A0F),
-              body: SafeArea(child:SingleChildScrollView(
-                physics:const ClampingScrollPhysics(),
-                padding:const EdgeInsets.symmetric(horizontal:24,vertical:16),
-                child:Column(children:[
-                  const SizedBox(height:20),
-                  const Text('MOBILE TV STUDIO',style:TextStyle(fontSize:24,
-                    fontWeight:FontWeight.w900,letterSpacing:4)),
-                  const SizedBox(height:4),
-                  const Text('What is this phone?',
-                    style:TextStyle(fontSize:12,color:Colors.white54)),
-                  const SizedBox(height:20),
-                  Row(mainAxisAlignment:MainAxisAlignment.center,children:[
-                    _card(c,Icons.videocam,'CAMERA',const Color(0xFFEF4444),
-                      ()=>Navigator.push(c,MaterialPageRoute(builder:(_)=>const CameraScreen()))),
-                    const SizedBox(width:16),
-                    _card(c,Icons.dashboard,'DIRECTOR',const Color(0xFF3B82F6),
-                      ()=>Navigator.push(c,MaterialPageRoute(builder:(_)=>const DirectorScreen()))),
-                    const SizedBox(width:16),
-                    _card(c,Icons.all_inclusive,'BOTH',const Color(0xFF8B5CF6),
-                      ()=>Navigator.push(c,MaterialPageRoute(builder:(_)=>const DirectorScreen())))]),
-                ]))));
-            Widget _card(BuildContext c,IconData i,String t,Color col,VoidCallback on) => InkWell(
-              onTap:on,borderRadius:BorderRadius.circular(12),
-              child:Container(width:140,height:150,
-                decoration:BoxDecoration(color:Colors.white10,borderRadius:BorderRadius.circular(12),
-                  border:Border.all(color:col.withOpacity(0.5),width:2)),
-                child:Column(mainAxisAlignment:MainAxisAlignment.center,children:[
-                  Icon(i,size:44,color:col),const SizedBox(height:10),
-                  Text(t,style:const TextStyle(fontSize:14,fontWeight:FontWeight.w900,letterSpacing:2))])));
-          }
-          D
-          cat > lib/main.dart << 'D'
-          import 'package:flutter/material.dart';
-          import 'package:flutter/services.dart';
-          import 'screens/role_chooser.dart';
-          void main() async {
-            WidgetsFlutterBinding.ensureInitialized();
-            await SystemChrome.setPreferredOrientations([
-              DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
-            await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-            runApp(const App());
-          }
-          class App extends StatelessWidget {
-            const App({super.key});
-            @override Widget build(BuildContext c) => MaterialApp(
-              debugShowCheckedModeBanner:false,title:'Mobile TV Studio',
-              theme:ThemeData(useMaterial3:true,brightness:Brightness.dark,
-                scaffoldBackgroundColor:const Color(0xFF0A0A0F),
-                colorScheme:const ColorScheme.dark(primary:Color(0xFF3B82F6),
-                  surface:Color(0xFF141418))),
-              home:const RoleChooser());
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                backgroundColor: const Color(0xFF0A0A0F),
+                body: SafeArea(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                    child: Column(
+                      children: [
+                        const SizedBox(height: 20),
+                        const Text('MOBILE TV STUDIO',
+                          style: TextStyle(fontSize: 24,
+                            fontWeight: FontWeight.w900, letterSpacing: 4)),
+                        const SizedBox(height: 4),
+                        const Text('What is this phone?',
+                          style: TextStyle(fontSize: 12, color: Colors.white54)),
+                        const SizedBox(height: 20),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _card(context, Icons.videocam, 'CAMERA',
+                              const Color(0xFFEF4444), () {
+                              Navigator.push(context, MaterialPageRoute(
+                                builder: (_) => const CameraScreen()));
+                            }),
+                            const SizedBox(width: 16),
+                            _card(context, Icons.dashboard, 'DIRECTOR',
+                              const Color(0xFF3B82F6), () {
+                              Navigator.push(context, MaterialPageRoute(
+                                builder: (_) => const DirectorScreen()));
+                            }),
+                            const SizedBox(width: 16),
+                            _card(context, Icons.all_inclusive, 'BOTH',
+                              const Color(0xFF8B5CF6), () {
+                              Navigator.push(context, MaterialPageRoute(
+                                builder: (_) => const DirectorScreen()));
+                            }),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            Widget _card(BuildContext context, IconData icon, String title,
+                Color color, VoidCallback onTap) {
+              return InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  width: 140,
+                  height: 150,
+                  decoration: BoxDecoration(
+                    color: Colors.white10,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: color.withOpacity(0.5), width: 2),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(icon, size: 44, color: color),
+                      const SizedBox(height: 10),
+                      Text(title,
+                        style: const TextStyle(fontSize: 14,
+                          fontWeight: FontWeight.w900, letterSpacing: 2)),
+                    ],
+                  ),
+                ),
+              );
+            }
           }
           D
 
-      - name: MainActivity
-        run: |
-          mkdir -p /tmp/backup
-          cat > /tmp/backup/MainActivity.kt << 'K'
-          package com.yourcompany.studio
-          import io.flutter.embedding.android.FlutterActivity
-          class MainActivity : FlutterActivity()
-          K
-
-      - name: Regen android
+      - name: Regen android + build
         run: |
           rm -rf android
           flutter create --platforms=android --org com.yourcompany --project-name mobile_tv_studio .
           rm -f pubspec.lock
-          mkdir -p android/app/src/main/kotlin/com/yourcompany/studio
-          cp /tmp/backup/MainActivity.kt android/app/src/main/kotlin/com/yourcompany/studio/MainActivity.kt
-
-      - name: Deps + icons
-        run: |
           flutter pub get
           dart run flutter_launcher_icons
           dart run flutter_native_splash:create
 
-      - name: Gradle setup
-        run: |
           cat > android/gradle/wrapper/gradle-wrapper.properties << 'E'
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
@@ -702,6 +1097,7 @@ jobs:
           zipStorePath=wrapper/dists
           distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip
           E
+
           cat > android/settings.gradle << 'E'
           pluginManagement {
               def fp = { def p = new Properties(); file("local.properties").withInputStream { p.load(it) }; return p.getProperty("flutter.sdk") }()
@@ -715,6 +1111,7 @@ jobs:
           }
           include ":app"
           E
+
           cat > android/build.gradle << 'E'
           ext { kotlin_version = "2.1.0" }
           allprojects { repositories { google(); mavenCentral() } }
@@ -736,6 +1133,7 @@ jobs:
           subprojects { project.evaluationDependsOn(":app") }
           tasks.register("clean", Delete) { delete rootProject.buildDir }
           E
+
           cat >> android/gradle.properties << 'E'
 
           android.useAndroidX=true
@@ -743,8 +1141,6 @@ jobs:
           org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
           E
 
-      - name: Manifest
-        run: |
           cat > android/app/src/main/AndroidManifest.xml << 'XML'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
                     xmlns:tools="http://schemas.android.com/tools">
@@ -752,9 +1148,6 @@ jobs:
               <uses-permission android:name="android.permission.RECORD_AUDIO" />
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-              <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
-              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
               <uses-feature android:name="android.hardware.camera" android:required="true" />
               <uses-feature android:name="android.hardware.microphone" android:required="true" />
               <application android:label="Mobile TV Studio"
@@ -782,8 +1175,7 @@ jobs:
           </manifest>
           XML
 
-      - name: Build APK
-        run: flutter build apk --release
+          flutter build apk --release
 
       - uses: actions/upload-artifact@v4
         if: success()
