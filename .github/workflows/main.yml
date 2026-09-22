@@ -27,6 +27,8 @@ jobs:
             camera: ^0.11.0+2
             shared_preferences: ^2.3.2
             uuid: ^4.5.0
+            flutter_webrtc: ^0.11.7
+            web_socket_channel: ^3.0.1
           dev_dependencies:
             flutter_test:
               sdk: flutter
@@ -70,7 +72,7 @@ jobs:
           img.save('assets/icon/app_icon.png')
           PY
 
-      - name: Write main.dart
+      - name: Write main
         run: |
           cat > lib/main.dart << 'D'
           import 'package:flutter/material.dart';
@@ -98,6 +100,230 @@ jobs:
                 ),
                 home: const RoleChooser(),
               );
+            }
+          }
+          D
+
+      - name: Write config
+        run: |
+          cat > lib/services/config.dart << 'D'
+          class AppConfig {
+            static const String signalingUrl = 'wss://mobile-tv-studio.onrender.com';
+            static const String roomId = 'studio1';
+          }
+          D
+
+      - name: Write signaling
+        run: |
+          cat > lib/services/signaling.dart << 'D'
+          import 'dart:async';
+          import 'dart:convert';
+          import 'package:web_socket_channel/web_socket_channel.dart';
+          enum SignalType { offer, answer, candidate, join, leave }
+          class SignalMessage {
+            final SignalType type;
+            final String room;
+            final String from;
+            final String sdp;
+            final String mid;
+            final int mline;
+            SignalMessage({
+              required this.type,
+              required this.room,
+              required this.from,
+              this.sdp = '',
+              this.mid = '',
+              this.mline = 0,
+            });
+            Map<String, dynamic> toJson() {
+              return {
+                'type': type.name,
+                'room': room,
+                'from': from,
+                'sdp': sdp,
+                'mid': mid,
+                'mline': mline,
+              };
+            }
+            factory SignalMessage.fromJson(Map<String, dynamic> j) {
+              return SignalMessage(
+                type: SignalType.values.firstWhere(
+                  (t) => t.name == j['type'],
+                  orElse: () => SignalType.candidate,
+                ),
+                room: j['room'] ?? '',
+                from: j['from'] ?? '',
+                sdp: j['sdp'] ?? '',
+                mid: j['mid'] ?? '',
+                mline: j['mline'] ?? 0,
+              );
+            }
+          }
+          class SignalingClient {
+            final String serverUrl;
+            final String roomId;
+            final String clientId;
+            SignalingClient({
+              required this.serverUrl,
+              required this.roomId,
+              required this.clientId,
+            });
+            WebSocketChannel? _channel;
+            final _controller = StreamController<SignalMessage>.broadcast();
+            Stream<SignalMessage> get messages => _controller.stream;
+            Future<bool> connect() async {
+              try {
+                _channel = WebSocketChannel.connect(Uri.parse(serverUrl));
+                await _channel!.ready;
+                _channel!.stream.listen(
+                  (raw) {
+                    try {
+                      _controller.add(SignalMessage.fromJson(jsonDecode(raw as String)));
+                    } catch (_) {}
+                  },
+                  onError: (_) {},
+                );
+                send(SignalMessage(type: SignalType.join, room: roomId, from: clientId));
+                return true;
+              } catch (_) {
+                return false;
+              }
+            }
+            void send(SignalMessage m) {
+              try {
+                _channel?.sink.add(jsonEncode(m.toJson()));
+              } catch (_) {}
+            }
+            Future<void> disconnect() async {
+              send(SignalMessage(type: SignalType.leave, room: roomId, from: clientId));
+              await _channel?.sink.close();
+              await _controller.close();
+            }
+          }
+          D
+
+      - name: Write webrtc session
+        run: |
+          cat > lib/services/webrtc_session.dart << 'D'
+          import 'dart:async';
+          import 'package:flutter/foundation.dart';
+          import 'package:flutter_webrtc/flutter_webrtc.dart';
+          import 'signaling.dart';
+          class WebRtcSession {
+            final String serverUrl;
+            final String roomId;
+            final String clientId;
+            final bool isCaller;
+            WebRtcSession({
+              required this.serverUrl,
+              required this.roomId,
+              required this.clientId,
+              required this.isCaller,
+            });
+            RTCPeerConnection? _pc;
+            MediaStream? _localStream;
+            SignalingClient? _signal;
+            StreamSubscription<SignalMessage>? _sub;
+            final _remote = RTCVideoRenderer();
+            bool _ready = false;
+            RTCVideoRenderer get renderer => _remote;
+            MediaStream? get localStream => _localStream;
+            bool get ready => _ready;
+            Future<bool> start() async {
+              try {
+                if (!_ready) {
+                  await _remote.initialize();
+                  _ready = true;
+                }
+                _pc = await createPeerConnection({
+                  'iceServers': [
+                    {'urls': 'stun:stun.l.google.com:19302'},
+                    {'urls': 'stun:stun1.l.google.com:19302'},
+                  ],
+                  'sdpSemantics': 'unified-plan',
+                  'iceTransportPolicy': 'all',
+                });
+                _pc!.onIceCandidate = (c) {
+                  _signal?.send(SignalMessage(
+                    type: SignalType.candidate,
+                    room: roomId,
+                    from: clientId,
+                    sdp: c.candidate ?? '',
+                    mid: c.sdpMid ?? '',
+                    mline: c.sdpMLineIndex ?? 0,
+                  ));
+                };
+                _pc!.onTrack = (e) {
+                  if (e.streams.isNotEmpty) {
+                    _remote.srcObject = e.streams[0];
+                  }
+                };
+                _localStream = await navigator.mediaDevices.getUserMedia({
+                  'audio': true,
+                  'video': {
+                    'facingMode': 'environment',
+                    'width': {'ideal': 854},
+                    'height': {'ideal': 480},
+                    'frameRate': {'ideal': 24},
+                  },
+                });
+                for (final t in _localStream!.getTracks()) {
+                  await _pc!.addTrack(t, _localStream!);
+                }
+                _signal = SignalingClient(
+                  serverUrl: serverUrl,
+                  roomId: roomId,
+                  clientId: clientId,
+                );
+                if (!await _signal!.connect()) {
+                  return false;
+                }
+                _sub = _signal!.messages.listen(_onSignal);
+                if (isCaller) {
+                  final offer = await _pc!.createOffer();
+                  await _pc!.setLocalDescription(offer);
+                  _signal!.send(SignalMessage(
+                    type: SignalType.offer,
+                    room: roomId,
+                    from: clientId,
+                    sdp: offer.sdp ?? '',
+                  ));
+                }
+                return true;
+              } catch (e) {
+                debugPrint('webrtc: $e');
+                return false;
+              }
+            }
+            Future<void> _onSignal(SignalMessage m) async {
+              if (m.from == clientId) return;
+              if (m.type == SignalType.offer) {
+                await _pc!.setRemoteDescription(RTCSessionDescription(m.sdp, 'offer'));
+                final a = await _pc!.createAnswer();
+                await _pc!.setLocalDescription(a);
+                _signal!.send(SignalMessage(
+                  type: SignalType.answer,
+                  room: roomId,
+                  from: clientId,
+                  sdp: a.sdp ?? '',
+                ));
+              } else if (m.type == SignalType.answer) {
+                await _pc!.setRemoteDescription(RTCSessionDescription(m.sdp, 'answer'));
+              } else if (m.type == SignalType.candidate) {
+                await _pc!.addCandidate(RTCIceCandidate(m.sdp, m.mid, m.mline));
+              }
+            }
+            Future<void> stop() async {
+              await _sub?.cancel();
+              await _signal?.disconnect();
+              for (final t in _localStream?.getTracks() ?? <MediaStreamTrack>[]) {
+                await t.stop();
+              }
+              await _localStream?.dispose();
+              await _pc?.close();
+              await _pc?.dispose();
+              _pc = null;
+              _localStream = null;
             }
           }
           D
@@ -442,6 +668,8 @@ jobs:
         run: |
           cat > lib/screens/camera_screen.dart << 'D'
           import 'package:flutter/material.dart';
+          import '../services/webrtc_session.dart';
+          import '../services/config.dart';
           import '../widgets/live_camera.dart';
           class CameraScreen extends StatefulWidget {
             const CameraScreen({super.key});
@@ -453,6 +681,8 @@ jobs:
             bool _front = false;
             String _quality = '720p';
             int _fps = 30;
+            String _status = 'OFFLINE';
+            WebRtcSession? _session;
             void _cycleQuality() {
               setState(() {
                 if (_quality == '720p') {
@@ -470,6 +700,38 @@ jobs:
                 final idx = opts.indexOf(_fps);
                 _fps = opts[(idx + 1) % opts.length];
               });
+            }
+            Future<void> _toggle() async {
+              if (_live) {
+                await _session?.stop();
+                setState(() {
+                  _live = false;
+                  _status = 'OFFLINE';
+                });
+              } else {
+                setState(() => _status = 'CONNECTING');
+                final s = WebRtcSession(
+                  serverUrl: AppConfig.signalingUrl,
+                  roomId: AppConfig.roomId,
+                  clientId: 'cam_${DateTime.now().millisecondsSinceEpoch}',
+                  isCaller: true,
+                );
+                final ok = await s.start();
+                if (ok) {
+                  _session = s;
+                  setState(() {
+                    _live = true;
+                    _status = 'LIVE';
+                  });
+                } else {
+                  setState(() => _status = 'RELAY OFFLINE');
+                }
+              }
+            }
+            @override
+            void dispose() {
+              _session?.stop();
+              super.dispose();
             }
             @override
             Widget build(BuildContext context) {
@@ -490,7 +752,7 @@ jobs:
                       padding: const EdgeInsets.only(right: 12),
                       child: Center(
                         child: Text(
-                          '$_quality - ${_fps}fps - ${_live ? "LIVE" : "OFFLINE"}',
+                          '$_quality - ${_fps}fps - $_status',
                           style: TextStyle(
                             color: _live ? Colors.green : Colors.grey,
                             fontSize: 10,
@@ -533,7 +795,7 @@ jobs:
                               _live ? 'STOP' : 'GO LIVE',
                               _live ? Colors.red : Colors.green,
                               78,
-                              () => setState(() => _live = !_live),
+                              _toggle,
                             ),
                             const SizedBox(height: 8),
                             _btn(Icons.high_quality, _quality, Colors.blue, 64, _cycleQuality),
@@ -901,8 +1163,11 @@ jobs:
           cat > lib/screens/director_screen.dart << 'D'
           import 'dart:async';
           import 'package:flutter/material.dart';
+          import 'package:flutter_webrtc/flutter_webrtc.dart';
           import '../models/overlay_item.dart';
           import '../services/overlay_store.dart';
+          import '../services/webrtc_session.dart';
+          import '../services/config.dart';
           import '../widgets/overlay_renderer.dart';
           import 'graphics_editor.dart';
 
@@ -930,6 +1195,8 @@ jobs:
             List<bool> _preview = List.generate(15, (i) => i == 1);
             final _overlayStore = OverlayStore();
             List<OverlayItem> _overlays = [];
+            WebRtcSession? _session;
+            String _connStatus = 'OFFLINE';
 
             @override
             void initState() {
@@ -940,6 +1207,24 @@ jobs:
                 }
               });
               _loadOverlays();
+              _connect();
+            }
+
+            Future<void> _connect() async {
+              setState(() => _connStatus = 'CONNECTING');
+              final s = WebRtcSession(
+                serverUrl: AppConfig.signalingUrl,
+                roomId: AppConfig.roomId,
+                clientId: 'dir_${DateTime.now().millisecondsSinceEpoch}',
+                isCaller: false,
+              );
+              final ok = await s.start();
+              if (ok) {
+                _session = s;
+                setState(() => _connStatus = 'CONNECTED');
+              } else {
+                setState(() => _connStatus = 'RELAY OFFLINE');
+              }
             }
 
             Future<void> _loadOverlays() async {
@@ -952,6 +1237,7 @@ jobs:
             @override
             void dispose() {
               _ticker?.cancel();
+              _session?.stop();
               super.dispose();
             }
 
@@ -1168,6 +1454,15 @@ jobs:
                     ),
                     const Spacer(),
                     Text(
+                      _connStatus,
+                      style: TextStyle(
+                        color: _connStatus == 'CONNECTED' ? Colors.green : Colors.orangeAccent,
+                        fontSize: 9,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
                       _time,
                       style: const TextStyle(
                         color: Colors.white,
@@ -1343,25 +1638,35 @@ jobs:
                       final w = cons.maxWidth;
                       final previewIdx = _preview.indexOf(true);
                       final previewNum = previewIdx >= 0 ? previewIdx + 1 : 1;
+                      final hasRemote = _session != null && _session!.renderer.srcObject != null;
                       return Stack(
                         children: [
-                          const Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.videocam_off, color: Colors.white24, size: 32),
-                                SizedBox(height: 6),
-                                Text(
-                                  'WAITING FOR CAMERA',
-                                  style: TextStyle(
-                                    color: Colors.white38,
-                                    fontSize: 10,
-                                    letterSpacing: 2,
+                          if (hasRemote)
+                            Positioned.fill(
+                              child: RTCVideoView(
+                                _session!.renderer,
+                                mirror: false,
+                                objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                              ),
+                            )
+                          else
+                            const Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.videocam_off, color: Colors.white24, size: 32),
+                                  SizedBox(height: 6),
+                                  Text(
+                                    'WAITING FOR CAMERA',
+                                    style: TextStyle(
+                                      color: Colors.white38,
+                                      fontSize: 10,
+                                      letterSpacing: 2,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
-                          ),
                           Positioned(
                             top: 6,
                             left: 6,
@@ -1633,7 +1938,7 @@ jobs:
           }
           D
 
-      - name: Create android
+      - name: Create android and build
         run: |
           flutter create --platforms=android --org com.yourcompany --project-name mobile_tv_studio .
           rm -f pubspec.lock
@@ -1736,6 +2041,9 @@ jobs:
               <uses-permission android:name="android.permission.RECORD_AUDIO" />
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+              <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
               <uses-feature android:name="android.hardware.camera" android:required="true" />
               <uses-feature android:name="android.hardware.microphone" android:required="true" />
               <application android:label="Mobile TV Studio"
