@@ -26,8 +26,6 @@ jobs:
             camera: ^0.11.0+2
             shared_preferences: ^2.3.2
             uuid: ^4.5.0
-            flutter_webrtc: ^0.11.7
-            web_socket_channel: ^3.0.1
           dev_dependencies:
             flutter_test:
               sdk: flutter
@@ -70,60 +68,6 @@ jobs:
           d.text((512,900),'STUDIO',fill=(239,68,68,255),anchor='mm',font=f2)
           img.save('assets/icon/app_icon.png')
           PY
-          mkdir -p /tmp/backup
-          cat > /tmp/backup/MainActivity.kt << 'K'
-          package com.yourcompany.studio
-          import android.Manifest
-          import android.content.Context
-          import android.media.AudioDeviceInfo
-          import android.media.AudioManager
-          import android.os.Build
-          import androidx.core.app.ActivityCompat
-          import io.flutter.embedding.android.FlutterActivity
-          import io.flutter.embedding.engine.FlutterEngine
-          import io.flutter.plugin.common.MethodChannel
-          class MainActivity : FlutterActivity() {
-              override fun configureFlutterEngine(e: FlutterEngine) {
-                  super.configureFlutterEngine(e)
-                  MethodChannel(e.dartExecutor.binaryMessenger,
-                      "mobile_tv_studio/native/audio"
-                  ).setMethodCallHandler { call, result ->
-                      when (call.method) {
-                          "listInputs" -> result.success(listAudio())
-                          "requestPermission" -> {
-                              ActivityCompat.requestPermissions(this,
-                                  arrayOf(Manifest.permission.RECORD_AUDIO), 9901)
-                              result.success(null)
-                          }
-                          else -> result.notImplemented()
-                      }
-                  }
-              }
-              private fun listAudio(): List<Map<String, Any>> {
-                  val out = mutableListOf<Map<String, Any>>()
-                  val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                  if (Build.VERSION.SDK_INT < 23) return out
-                  for (d in am.getDevices(AudioManager.GET_DEVICES_INPUTS)) {
-                      val type = when (d.type) {
-                          AudioDeviceInfo.TYPE_BUILTIN_MIC -> "builtin"
-                          AudioDeviceInfo.TYPE_USB_DEVICE,
-                          AudioDeviceInfo.TYPE_USB_HEADSET -> "usb"
-                          AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
-                          AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "bluetooth"
-                          AudioDeviceInfo.TYPE_WIRED_HEADSET,
-                          AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "wired"
-                          else -> "other"
-                      }
-                      out.add(mapOf(
-                          "id" to d.id,
-                          "name" to (d.productName?.toString() ?: "Unknown"),
-                          "type" to type
-                      ))
-                  }
-                  return out
-              }
-          }
-          K
 
       - name: Write Dart files
         run: |
@@ -157,284 +101,6 @@ jobs:
           }
           D
 
-          cat > lib/services/config.dart << 'D'
-          class AppConfig {
-            static const String signalingUrl = 'wss://mobile-tv-studio.onrender.com';
-            static const String roomId = 'studio1';
-          }
-          D
-
-          cat > lib/services/audio_input_service.dart << 'D'
-          import 'package:flutter/foundation.dart';
-          import 'package:flutter/services.dart';
-          class AudioInputDevice {
-            final int id;
-            final String name;
-            final String type;
-            AudioInputDevice({
-              required this.id,
-              required this.name,
-              required this.type,
-            });
-          }
-          class AudioInputService extends ChangeNotifier {
-            static const _ch = MethodChannel('mobile_tv_studio/native/audio');
-            List<AudioInputDevice> _inputs = [];
-            int? _selectedId;
-            List<AudioInputDevice> get inputs => _inputs;
-            int? get selectedId => _selectedId;
-            Future<void> refresh() async {
-              try {
-                final raw = await _ch.invokeMethod<List<dynamic>>('listInputs');
-                if (raw == null) {
-                  _inputs = [];
-                  notifyListeners();
-                  return;
-                }
-                _inputs = raw.map((e) {
-                  final m = e as Map;
-                  return AudioInputDevice(
-                    id: (m['id'] as num).toInt(),
-                    name: m['name']?.toString() ?? 'Unknown',
-                    type: m['type']?.toString() ?? 'other',
-                  );
-                }).toList();
-              } catch (_) {
-                _inputs = [];
-              }
-              notifyListeners();
-            }
-            void select(int id) {
-              _selectedId = id;
-              notifyListeners();
-            }
-          }
-          D
-
-          cat > lib/services/signaling.dart << 'D'
-          import 'dart:async';
-          import 'dart:convert';
-          import 'package:web_socket_channel/web_socket_channel.dart';
-          enum SignalType { offer, answer, candidate, join, leave }
-          class SignalMessage {
-            final SignalType type;
-            final String room;
-            final String from;
-            final String sdp;
-            final String mid;
-            final int mline;
-            SignalMessage({
-              required this.type,
-              required this.room,
-              required this.from,
-              this.sdp = '',
-              this.mid = '',
-              this.mline = 0,
-            });
-            Map<String, dynamic> toJson() => {
-              'type': type.name,
-              'room': room,
-              'from': from,
-              'sdp': sdp,
-              'mid': mid,
-              'mline': mline,
-            };
-            factory SignalMessage.fromJson(Map<String, dynamic> j) =>
-              SignalMessage(
-                type: SignalType.values.firstWhere(
-                  (t) => t.name == j['type'],
-                  orElse: () => SignalType.candidate,
-                ),
-                room: j['room'] ?? '',
-                from: j['from'] ?? '',
-                sdp: j['sdp'] ?? '',
-                mid: j['mid'] ?? '',
-                mline: j['mline'] ?? 0,
-              );
-          }
-          class SignalingClient {
-            final String serverUrl;
-            final String roomId;
-            final String clientId;
-            SignalingClient({
-              required this.serverUrl,
-              required this.roomId,
-              required this.clientId,
-            });
-            WebSocketChannel? _channel;
-            final _controller = StreamController<SignalMessage>.broadcast();
-            Stream<SignalMessage> get messages => _controller.stream;
-            Future<bool> connect() async {
-              try {
-                _channel = WebSocketChannel.connect(Uri.parse(serverUrl));
-                await _channel!.ready;
-                _channel!.stream.listen(
-                  (raw) {
-                    try {
-                      _controller.add(
-                        SignalMessage.fromJson(jsonDecode(raw as String)),
-                      );
-                    } catch (_) {}
-                  },
-                  onError: (_) {},
-                );
-                send(SignalMessage(
-                  type: SignalType.join,
-                  room: roomId,
-                  from: clientId,
-                ));
-                return true;
-              } catch (_) {
-                return false;
-              }
-            }
-            void send(SignalMessage m) {
-              try {
-                _channel?.sink.add(jsonEncode(m.toJson()));
-              } catch (_) {}
-            }
-            Future<void> disconnect() async {
-              send(SignalMessage(
-                type: SignalType.leave,
-                room: roomId,
-                from: clientId,
-              ));
-              await _channel?.sink.close();
-              await _controller.close();
-            }
-          }
-          D
-
-          cat > lib/services/webrtc_session.dart << 'D'
-          import 'dart:async';
-          import 'package:flutter/foundation.dart';
-          import 'package:flutter_webrtc/flutter_webrtc.dart';
-          import 'signaling.dart';
-          class WebRtcSession {
-            final String serverUrl;
-            final String roomId;
-            final String clientId;
-            final bool isCaller;
-            WebRtcSession({
-              required this.serverUrl,
-              required this.roomId,
-              required this.clientId,
-              required this.isCaller,
-            });
-            RTCPeerConnection? _pc;
-            MediaStream? _localStream;
-            SignalingClient? _signal;
-            StreamSubscription<SignalMessage>? _sub;
-            final _remote = RTCVideoRenderer();
-            bool _ready = false;
-            RTCVideoRenderer get renderer => _remote;
-            MediaStream? get localStream => _localStream;
-            bool get ready => _ready;
-            Future<bool> start() async {
-              try {
-                if (!_ready) {
-                  await _remote.initialize();
-                  _ready = true;
-                }
-                _pc = await createPeerConnection({
-                  'iceServers': [
-                    {'urls': 'stun:stun.l.google.com:19302'},
-                    {'urls': 'stun:stun1.l.google.com:19302'},
-                  ],
-                  'sdpSemantics': 'unified-plan',
-                  'iceTransportPolicy': 'all',
-                });
-                _pc!.onIceCandidate = (c) {
-                  _signal?.send(SignalMessage(
-                    type: SignalType.candidate,
-                    room: roomId,
-                    from: clientId,
-                    sdp: c.candidate ?? '',
-                    mid: c.sdpMid ?? '',
-                    mline: c.sdpMLineIndex ?? 0,
-                  ));
-                };
-                _pc!.onTrack = (e) {
-                  if (e.streams.isNotEmpty) {
-                    _remote.srcObject = e.streams[0];
-                  }
-                };
-                _localStream = await navigator.mediaDevices.getUserMedia({
-                  'audio': true,
-                  'video': {
-                    'facingMode': 'environment',
-                    'width': {'ideal': 854},
-                    'height': {'ideal': 480},
-                    'frameRate': {'ideal': 24},
-                  },
-                });
-                for (final t in _localStream!.getTracks()) {
-                  await _pc!.addTrack(t, _localStream!);
-                }
-                _signal = SignalingClient(
-                  serverUrl: serverUrl,
-                  roomId: roomId,
-                  clientId: clientId,
-                );
-                if (!await _signal!.connect()) {
-                  return false;
-                }
-                _sub = _signal!.messages.listen(_onSignal);
-                if (isCaller) {
-                  final offer = await _pc!.createOffer();
-                  await _pc!.setLocalDescription(offer);
-                  _signal!.send(SignalMessage(
-                    type: SignalType.offer,
-                    room: roomId,
-                    from: clientId,
-                    sdp: offer.sdp ?? '',
-                  ));
-                }
-                return true;
-              } catch (e) {
-                debugPrint('webrtc: $e');
-                return false;
-              }
-            }
-            Future<void> _onSignal(SignalMessage m) async {
-              if (m.from == clientId) return;
-              if (m.type == SignalType.offer) {
-                await _pc!.setRemoteDescription(
-                  RTCSessionDescription(m.sdp, 'offer'),
-                );
-                final a = await _pc!.createAnswer();
-                await _pc!.setLocalDescription(a);
-                _signal!.send(SignalMessage(
-                  type: SignalType.answer,
-                  room: roomId,
-                  from: clientId,
-                  sdp: a.sdp ?? '',
-                ));
-              } else if (m.type == SignalType.answer) {
-                await _pc!.setRemoteDescription(
-                  RTCSessionDescription(m.sdp, 'answer'),
-                );
-              } else if (m.type == SignalType.candidate) {
-                await _pc!.addCandidate(
-                  RTCIceCandidate(m.sdp, m.mid, m.mline),
-                );
-              }
-            }
-            Future<void> stop() async {
-              await _sub?.cancel();
-              await _signal?.disconnect();
-              for (final t in _localStream?.getTracks() ?? <MediaStreamTrack>[]) {
-                await t.stop();
-              }
-              await _localStream?.dispose();
-              await _pc?.close();
-              await _pc?.dispose();
-              _pc = null;
-              _localStream = null;
-            }
-          }
-          D
-
           cat > lib/models/overlay_item.dart << 'D'
           enum OverlayKind { text, liveBadge }
           class OverlayItem {
@@ -454,17 +120,19 @@ jobs:
               this.size = 20,
               this.color = 0xFFFFFFFF,
             });
-            Map<String, dynamic> toJson() => {
-              'id': id,
-              'kind': kind.name,
-              'content': content,
-              'x': x,
-              'y': y,
-              'size': size,
-              'color': color,
-            };
-            factory OverlayItem.fromJson(Map<String, dynamic> j) =>
-              OverlayItem(
+            Map<String, dynamic> toJson() {
+              return {
+                'id': id,
+                'kind': kind.name,
+                'content': content,
+                'x': x,
+                'y': y,
+                'size': size,
+                'color': color,
+              };
+            }
+            factory OverlayItem.fromJson(Map<String, dynamic> j) {
+              return OverlayItem(
                 id: j['id'],
                 kind: OverlayKind.values.firstWhere(
                   (k) => k.name == j['kind'],
@@ -476,6 +144,7 @@ jobs:
                 size: (j['size'] as num).toDouble(),
                 color: j['color'] ?? 0xFFFFFFFF,
               );
+            }
           }
           D
 
@@ -493,21 +162,24 @@ jobs:
               required this.streamKey,
               required this.rtmpUrl,
             });
-            Map<String, dynamic> toJson() => {
-              'id': id,
-              'platform': platform,
-              'name': name,
-              'streamKey': streamKey,
-              'rtmpUrl': rtmpUrl,
-            };
-            factory AccountItem.fromJson(Map<String, dynamic> j) =>
-              AccountItem(
+            Map<String, dynamic> toJson() {
+              return {
+                'id': id,
+                'platform': platform,
+                'name': name,
+                'streamKey': streamKey,
+                'rtmpUrl': rtmpUrl,
+              };
+            }
+            factory AccountItem.fromJson(Map<String, dynamic> j) {
+              return AccountItem(
                 id: j['id'],
                 platform: j['platform'],
                 name: j['name'],
                 streamKey: j['streamKey'],
                 rtmpUrl: j['rtmpUrl'],
               );
+            }
           }
           D
 
@@ -520,18 +192,20 @@ jobs:
             Future<List<OverlayItem>> loadAll() async {
               final p = await SharedPreferences.getInstance();
               final raw = p.getString(_key);
-              if (raw == null || raw.isEmpty) return [];
+              if (raw == null || raw.isEmpty) {
+                return [];
+              }
               try {
-                return (jsonDecode(raw) as List)
-                  .map((e) => OverlayItem.fromJson(e)).toList();
+                final list = jsonDecode(raw) as List;
+                return list.map((e) => OverlayItem.fromJson(e)).toList();
               } catch (_) {
                 return [];
               }
             }
             Future<void> saveAll(List<OverlayItem> items) async {
               final p = await SharedPreferences.getInstance();
-              await p.setString(_key,
-                jsonEncode(items.map((e) => e.toJson()).toList()));
+              final raw = jsonEncode(items.map((e) => e.toJson()).toList());
+              await p.setString(_key, raw);
             }
           }
           D
@@ -545,18 +219,20 @@ jobs:
             Future<List<AccountItem>> loadAll() async {
               final p = await SharedPreferences.getInstance();
               final raw = p.getString(_key);
-              if (raw == null || raw.isEmpty) return [];
+              if (raw == null || raw.isEmpty) {
+                return [];
+              }
               try {
-                return (jsonDecode(raw) as List)
-                  .map((e) => AccountItem.fromJson(e)).toList();
+                final list = jsonDecode(raw) as List;
+                return list.map((e) => AccountItem.fromJson(e)).toList();
               } catch (_) {
                 return [];
               }
             }
             Future<void> saveAll(List<AccountItem> items) async {
               final p = await SharedPreferences.getInstance();
-              await p.setString(_key,
-                jsonEncode(items.map((e) => e.toJson()).toList()));
+              final raw = jsonEncode(items.map((e) => e.toJson()).toList());
+              await p.setString(_key, raw);
             }
           }
           D
@@ -569,22 +245,29 @@ jobs:
             const OverlayRenderer({super.key, required this.overlays});
             @override
             Widget build(BuildContext context) {
-              return LayoutBuilder(builder: (context, cons) {
-                final w = cons.maxWidth;
-                final h = cons.maxHeight;
-                return Stack(children: overlays.map((o) {
-                  return Positioned(
-                    left: o.x * w - 60,
-                    top: o.y * h - 14,
-                    child: _item(o),
+              return LayoutBuilder(
+                builder: (context, cons) {
+                  final w = cons.maxWidth;
+                  final h = cons.maxHeight;
+                  return Stack(
+                    children: overlays.map((o) {
+                      return Positioned(
+                        left: o.x * w - 60,
+                        top: o.y * h - 14,
+                        child: _item(o),
+                      );
+                    }).toList(),
                   );
-                }).toList());
-              });
+                },
+              );
             }
             Widget _item(OverlayItem o) {
               if (o.kind == OverlayKind.liveBadge) {
                 return Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
                     color: Color(o.color),
                     borderRadius: BorderRadius.circular(4),
@@ -592,21 +275,40 @@ jobs:
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Container(width: 8, height: 8,
+                      Container(
+                        width: 8,
+                        height: 8,
                         decoration: const BoxDecoration(
-                          color: Colors.white, shape: BoxShape.circle)),
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
                       const SizedBox(width: 6),
-                      Text(o.content, style: TextStyle(
-                        color: Colors.white, fontSize: o.size,
-                        fontWeight: FontWeight.w900, letterSpacing: 2)),
+                      Text(
+                        o.content,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: o.size,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 2,
+                        ),
+                      ),
                     ],
                   ),
                 );
               }
-              return Text(o.content, style: TextStyle(
-                color: Color(o.color), fontSize: o.size,
-                fontWeight: FontWeight.w900, letterSpacing: 1,
-                shadows: const [Shadow(blurRadius: 4, color: Colors.black)]));
+              return Text(
+                o.content,
+                style: TextStyle(
+                  color: Color(o.color),
+                  fontSize: o.size,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1,
+                  shadows: const [
+                    Shadow(blurRadius: 4, color: Colors.black),
+                  ],
+                ),
+              );
             }
           }
           D
@@ -618,9 +320,9 @@ jobs:
             final bool front;
             const LiveCamera({super.key, this.front = false});
             @override
-            State<LiveCamera> createState() => _LC();
+            State<LiveCamera> createState() => _LiveCameraState();
           }
-          class _LC extends State<LiveCamera> {
+          class _LiveCameraState extends State<LiveCamera> {
             CameraController? _ctrl;
             bool _ready = false;
             String? _error;
@@ -643,12 +345,19 @@ jobs:
                   (c) => c.lensDirection == lens,
                   orElse: () => cams.first,
                 );
-                _ctrl = CameraController(cam, ResolutionPreset.high,
-                  enableAudio: true);
+                _ctrl = CameraController(
+                  cam,
+                  ResolutionPreset.high,
+                  enableAudio: true,
+                );
                 await _ctrl!.initialize();
-                if (mounted) setState(() => _ready = true);
+                if (mounted) {
+                  setState(() => _ready = true);
+                }
               } catch (e) {
-                if (mounted) setState(() => _error = e.toString());
+                if (mounted) {
+                  setState(() => _error = e.toString());
+                }
               }
             }
             @override
@@ -668,18 +377,35 @@ jobs:
             @override
             Widget build(BuildContext context) {
               if (_error != null) {
-                return Container(color: Colors.black, child: Center(
-                  child: Text(_error!, style: const TextStyle(
-                    color: Colors.redAccent, fontSize: 11))));
+                return Container(
+                  color: Colors.black,
+                  child: Center(
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(
+                        color: Colors.redAccent,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                );
               }
               if (!_ready || _ctrl == null) {
-                return Container(color: Colors.black, child: const Center(
-                  child: CircularProgressIndicator(color: Colors.redAccent)));
+                return Container(
+                  color: Colors.black,
+                  child: const Center(
+                    child: CircularProgressIndicator(
+                      color: Colors.redAccent,
+                    ),
+                  ),
+                );
               }
               final isFront = _ctrl!.description.lensDirection ==
-                CameraLensDirection.front;
-              return RotatedBox(quarterTurns: isFront ? 3 : 1,
-                child: CameraPreview(_ctrl!));
+                  CameraLensDirection.front;
+              return RotatedBox(
+                quarterTurns: isFront ? 3 : 1,
+                child: CameraPreview(_ctrl!),
+              );
             }
           }
           D
@@ -694,61 +420,121 @@ jobs:
             Widget build(BuildContext context) {
               return Scaffold(
                 backgroundColor: const Color(0xFF0A0A0F),
-                body: SafeArea(child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24, vertical: 16),
-                  child: Column(children: [
-                    const SizedBox(height: 20),
-                    const Text('MOBILE TV STUDIO', style: TextStyle(
-                      fontSize: 24, fontWeight: FontWeight.w900,
-                      letterSpacing: 4)),
-                    const SizedBox(height: 4),
-                    const Text('What is this phone?', style: TextStyle(
-                      fontSize: 12, color: Colors.white54)),
-                    const SizedBox(height: 20),
-                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      _card(context, Icons.videocam, 'CAMERA',
-                        const Color(0xFFEF4444), () {
-                        Navigator.push(context, MaterialPageRoute(
-                          builder: (_) => const CameraScreen()));
-                      }),
-                      const SizedBox(width: 16),
-                      _card(context, Icons.dashboard, 'DIRECTOR',
-                        const Color(0xFF3B82F6), () {
-                        Navigator.push(context, MaterialPageRoute(
-                          builder: (_) => const DirectorScreen()));
-                      }),
-                      const SizedBox(width: 16),
-                      _card(context, Icons.all_inclusive, 'BOTH',
-                        const Color(0xFF8B5CF6), () {
-                        Navigator.push(context, MaterialPageRoute(
-                          builder: (_) => const DirectorScreen()));
-                      }),
-                    ]),
-                  ]),
-                )),
+                body: SafeArea(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 16,
+                    ),
+                    child: Column(
+                      children: [
+                        const SizedBox(height: 20),
+                        const Text(
+                          'MOBILE TV STUDIO',
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 4,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'What is this phone?',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.white54,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _card(
+                              context,
+                              Icons.videocam,
+                              'CAMERA',
+                              const Color(0xFFEF4444),
+                              () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const CameraScreen(),
+                                  ),
+                                );
+                              },
+                            ),
+                            const SizedBox(width: 16),
+                            _card(
+                              context,
+                              Icons.dashboard,
+                              'DIRECTOR',
+                              const Color(0xFF3B82F6),
+                              () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const DirectorScreen(),
+                                  ),
+                                );
+                              },
+                            ),
+                            const SizedBox(width: 16),
+                            _card(
+                              context,
+                              Icons.all_inclusive,
+                              'BOTH',
+                              const Color(0xFF8B5CF6),
+                              () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const DirectorScreen(),
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               );
             }
-            Widget _card(BuildContext context, IconData icon, String title,
-                Color color, VoidCallback onTap) {
+            Widget _card(
+              BuildContext context,
+              IconData icon,
+              String title,
+              Color color,
+              VoidCallback onTap,
+            ) {
               return InkWell(
                 onTap: onTap,
                 borderRadius: BorderRadius.circular(12),
                 child: Container(
-                  width: 140, height: 150,
+                  width: 140,
+                  height: 150,
                   decoration: BoxDecoration(
                     color: Colors.white10,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: color.withOpacity(0.5), width: 2),
+                    border: Border.all(
+                      color: color.withOpacity(0.5),
+                      width: 2,
+                    ),
                   ),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(icon, size: 44, color: color),
                       const SizedBox(height: 10),
-                      Text(title, style: const TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.w900,
-                        letterSpacing: 2)),
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 2,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -759,23 +545,17 @@ jobs:
 
           cat > lib/screens/camera_screen.dart << 'D'
           import 'package:flutter/material.dart';
-          import '../services/webrtc_session.dart';
-          import '../services/audio_input_service.dart';
-          import '../services/config.dart';
           import '../widgets/live_camera.dart';
           class CameraScreen extends StatefulWidget {
             const CameraScreen({super.key});
             @override
-            State<CameraScreen> createState() => _CS();
+            State<CameraScreen> createState() => _CameraScreenState();
           }
-          class _CS extends State<CameraScreen> {
+          class _CameraScreenState extends State<CameraScreen> {
             bool _live = false;
             bool _front = false;
             String _quality = '720p';
             int _fps = 30;
-            String _status = 'OFFLINE';
-            String _mic = 'Built-in';
-            WebRtcSession? _session;
             void _cycleQ() {
               setState(() {
                 if (_quality == '720p') {
@@ -793,166 +573,115 @@ jobs:
                 _fps = o[(o.indexOf(_fps) + 1) % o.length];
               });
             }
-            Future<void> _toggle() async {
-              if (_live) {
-                await _session?.stop();
-                setState(() {
-                  _live = false;
-                  _status = 'OFFLINE';
-                });
-              } else {
-                setState(() => _status = 'CONNECTING');
-                final s = WebRtcSession(
-                  serverUrl: AppConfig.signalingUrl,
-                  roomId: AppConfig.roomId,
-                  clientId: 'cam_${DateTime.now().millisecondsSinceEpoch}',
-                  isCaller: true,
-                );
-                final ok = await s.start();
-                if (ok) {
-                  _session = s;
-                  setState(() {
-                    _live = true;
-                    _status = 'LIVE';
-                  });
-                } else {
-                  setState(() => _status = 'RELAY OFFLINE');
-                }
-              }
-            }
-            Future<void> _pickMic() async {
-              final audio = AudioInputService();
-              await audio.refresh();
-              if (!mounted) return;
-              showModalBottomSheet(
-                context: context,
-                backgroundColor: const Color(0xFF141418),
-                builder: (ctx) => SafeArea(child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Text('AUDIO INPUT', style: TextStyle(
-                        color: Colors.white70, letterSpacing: 3,
-                        fontWeight: FontWeight.w900)),
-                    ),
-                    if (audio.inputs.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Text(
-                          'No microphones. Plug in a USB sound card or mixer.',
-                          style: TextStyle(color: Colors.white54),
-                          textAlign: TextAlign.center),
-                      )
-                    else
-                      ...audio.inputs.map((d) {
-                        final color = d.type == 'usb'
-                            ? Colors.tealAccent
-                            : d.type == 'bluetooth'
-                                ? Colors.blueAccent
-                                : d.type == 'wired'
-                                    ? Colors.orangeAccent
-                                    : Colors.white54;
-                        return ListTile(
-                          leading: Icon(Icons.mic, color: color),
-                          title: Text(d.name, style: const TextStyle(
-                            color: Colors.white)),
-                          subtitle: Text(d.type.toUpperCase(),
-                            style: const TextStyle(
-                              color: Colors.white54, fontSize: 10)),
-                          onTap: () {
-                            audio.select(d.id);
-                            setState(() => _mic = d.name);
-                            Navigator.pop(ctx);
-                            ScaffoldMessenger.of(ctx).showSnackBar(
-                              SnackBar(content: Text('Audio: ${d.name}')));
-                          },
-                        );
-                      }),
-                  ],
-                )),
-              );
-            }
-            @override
-            void dispose() {
-              _session?.stop();
-              super.dispose();
-            }
             @override
             Widget build(BuildContext context) {
               return Scaffold(
                 backgroundColor: const Color(0xFF0A0A0F),
                 appBar: AppBar(
-                  title: const Text('CAMERA NODE', style: TextStyle(
-                    fontSize: 14, letterSpacing: 3,
-                    fontWeight: FontWeight.w900)),
+                  title: const Text(
+                    'CAMERA NODE',
+                    style: TextStyle(
+                      fontSize: 14,
+                      letterSpacing: 3,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
                   backgroundColor: const Color(0xFF141418),
                   actions: [
-                    IconButton(
-                      icon: const Icon(Icons.settings_voice,
-                        color: Colors.tealAccent),
-                      tooltip: 'Audio input ($_mic)',
-                      onPressed: _pickMic,
-                    ),
                     Padding(
                       padding: const EdgeInsets.only(right: 12),
-                      child: Center(child: Text(
-                        '$_quality - ${_fps}fps - $_status',
-                        style: TextStyle(
-                          color: _live ? Colors.green : Colors.grey,
-                          fontSize: 10, fontWeight: FontWeight.w800,
-                          letterSpacing: 1))),
+                      child: Center(
+                        child: Text(
+                          '$_quality - ${_fps}fps - ${_live ? "LIVE" : "OFFLINE"}',
+                          style: TextStyle(
+                            color: _live ? Colors.green : Colors.grey,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                      ),
                     ),
                   ],
                 ),
-                body: Row(children: [
-                  Expanded(child: Container(
-                    margin: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.black,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: _live ? Colors.red : Colors.white24,
-                        width: _live ? 3 : 1),
+                body: Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        margin: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.black,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: _live ? Colors.red : Colors.white24,
+                            width: _live ? 3 : 1,
+                          ),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: LiveCamera(front: _front),
+                        ),
+                      ),
                     ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: LiveCamera(front: _front),
+                    Container(
+                      width: 160,
+                      color: const Color(0xFF141418),
+                      padding: const EdgeInsets.all(8),
+                      child: SingleChildScrollView(
+                        child: Column(
+                          children: [
+                            _btn(
+                              _live ? Icons.stop : Icons.play_arrow,
+                              _live ? 'STOP' : 'GO LIVE',
+                              _live ? Colors.red : Colors.green,
+                              78,
+                              () => setState(() => _live = !_live),
+                            ),
+                            const SizedBox(height: 8),
+                            _btn(
+                              Icons.high_quality,
+                              _quality,
+                              Colors.blue,
+                              64,
+                              _cycleQ,
+                            ),
+                            const SizedBox(height: 8),
+                            _btn(
+                              Icons.speed,
+                              '$_fps FPS',
+                              Colors.tealAccent,
+                              64,
+                              _cycleF,
+                            ),
+                            const SizedBox(height: 8),
+                            _btn(
+                              Icons.flip_camera_android,
+                              _front ? 'FRONT' : 'REAR',
+                              Colors.purpleAccent,
+                              64,
+                              () => setState(() => _front = !_front),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                  )),
-                  Container(
-                    width: 160, color: const Color(0xFF141418),
-                    padding: const EdgeInsets.all(8),
-                    child: SingleChildScrollView(child: Column(children: [
-                      _btn(_live ? Icons.stop : Icons.play_arrow,
-                        _live ? 'STOP' : 'GO LIVE',
-                        _live ? Colors.red : Colors.green, 78, _toggle),
-                      const SizedBox(height: 8),
-                      _btn(Icons.high_quality, _quality, Colors.blue, 64, _cycleQ),
-                      const SizedBox(height: 8),
-                      _btn(Icons.speed, '$_fps FPS', Colors.tealAccent, 64, _cycleF),
-                      const SizedBox(height: 8),
-                      _btn(Icons.flip_camera_android,
-                        _front ? 'FRONT' : 'REAR',
-                        Colors.purpleAccent, 64,
-                        () => setState(() => _front = !_front)),
-                      const SizedBox(height: 8),
-                      Text(_mic.toUpperCase(), style: const TextStyle(
-                        color: Colors.white54, fontSize: 8,
-                        fontWeight: FontWeight.w900, letterSpacing: 1),
-                        textAlign: TextAlign.center),
-                    ])),
-                  ),
-                ]),
+                  ],
+                ),
               );
             }
-            Widget _btn(IconData icon, String label, Color color,
-                double size, VoidCallback onTap) {
+            Widget _btn(
+              IconData icon,
+              String label,
+              Color color,
+              double size,
+              VoidCallback onTap,
+            ) {
               return InkWell(
                 onTap: onTap,
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
-                  width: size, height: size,
+                  width: size,
+                  height: size,
                   decoration: BoxDecoration(
                     color: color.withOpacity(0.12),
                     border: Border.all(color: color, width: 1.5),
@@ -963,9 +692,16 @@ jobs:
                     children: [
                       Icon(icon, color: color, size: size * 0.32),
                       const SizedBox(height: 4),
-                      Text(label, textAlign: TextAlign.center,
-                        style: TextStyle(color: color, fontSize: 9,
-                          fontWeight: FontWeight.w900, letterSpacing: 1)),
+                      Text(
+                        label,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -980,201 +716,346 @@ jobs:
           import '../models/overlay_item.dart';
           import '../services/overlay_store.dart';
           import '../widgets/overlay_renderer.dart';
+
           class GraphicsEditor extends StatefulWidget {
             const GraphicsEditor({super.key});
             @override
             State<GraphicsEditor> createState() => _GE();
           }
+
           class _GE extends State<GraphicsEditor> {
             final _store = OverlayStore();
             List<OverlayItem> _items = [];
             String? _sel;
             final _swatches = [
-              0xFFFFFFFF, 0xFFEF4444, 0xFFF5C542, 0xFF22C55E,
-              0xFF3B82F6, 0xFF8B5CF6, 0xFFFF6B00, 0xFF00C2FF,
+              0xFFFFFFFF,
+              0xFFEF4444,
+              0xFFF5C542,
+              0xFF22C55E,
+              0xFF3B82F6,
+              0xFF8B5CF6,
+              0xFFFF6B00,
+              0xFF00C2FF,
             ];
+
             @override
             void initState() {
               super.initState();
               _load();
             }
+
             Future<void> _load() async {
               final items = await _store.loadAll();
-              if (mounted) setState(() => _items = items);
+              if (mounted) {
+                setState(() => _items = items);
+              }
             }
+
             Future<void> _save() async {
               await _store.saveAll(_items);
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Saved')));
+                  const SnackBar(content: Text('Saved')),
+                );
               }
             }
+
             Future<void> _addText() async {
               final ctrl = TextEditingController();
               final text = await showDialog<String>(
                 context: context,
-                builder: (ctx) => AlertDialog(
-                  backgroundColor: const Color(0xFF141418),
-                  title: const Text('Add Text'),
-                  content: TextField(
-                    controller: ctrl, autofocus: true,
-                    style: const TextStyle(color: Colors.white)),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx),
-                      child: const Text('CANCEL')),
-                    FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text),
-                      child: const Text('ADD')),
-                  ],
-                ),
+                builder: (ctx) {
+                  return AlertDialog(
+                    backgroundColor: const Color(0xFF141418),
+                    title: const Text('Add Text'),
+                    content: TextField(
+                      controller: ctrl,
+                      autofocus: true,
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: const Text('CANCEL'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(ctx, ctrl.text),
+                        child: const Text('ADD'),
+                      ),
+                    ],
+                  );
+                },
               );
-              if (text == null || text.isEmpty) return;
-              setState(() => _items.add(OverlayItem(
-                id: const Uuid().v4(), kind: OverlayKind.text,
-                content: text, x: 0.5, y: 0.5)));
+              if (text == null || text.isEmpty) {
+                return;
+              }
+              setState(() {
+                _items.add(OverlayItem(
+                  id: const Uuid().v4(),
+                  kind: OverlayKind.text,
+                  content: text,
+                  x: 0.5,
+                  y: 0.5,
+                ));
+              });
             }
+
             void _addLive() {
-              setState(() => _items.add(OverlayItem(
-                id: const Uuid().v4(), kind: OverlayKind.liveBadge,
-                content: 'LIVE', x: 0.1, y: 0.15,
-                size: 14, color: 0xFFEF4444)));
+              setState(() {
+                _items.add(OverlayItem(
+                  id: const Uuid().v4(),
+                  kind: OverlayKind.liveBadge,
+                  content: 'LIVE',
+                  x: 0.1,
+                  y: 0.15,
+                  size: 14,
+                  color: 0xFFEF4444,
+                ));
+              });
             }
+
             void _move(Offset d, Size box) {
-              if (_sel == null) return;
+              if (_sel == null) {
+                return;
+              }
               final item = _items.firstWhere((e) => e.id == _sel);
               setState(() {
                 item.x = (item.x + d.dx / box.width).clamp(0.0, 1.0);
                 item.y = (item.y + d.dy / box.height).clamp(0.0, 1.0);
               });
             }
+
             void _setColor(int c) {
-              if (_sel == null) return;
+              if (_sel == null) {
+                return;
+              }
               final item = _items.firstWhere((e) => e.id == _sel);
               setState(() => item.color = c);
             }
+
+            List<Widget> _buildHandles(Size box) {
+              final handles = <Widget>[];
+              for (final it in _items) {
+                handles.add(Positioned(
+                  left: it.x * box.width - 70,
+                  top: it.y * box.height - 20,
+                  child: GestureDetector(
+                    onTap: () => setState(() => _sel = it.id),
+                    child: Container(
+                      width: 140,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: _sel == it.id
+                              ? const Color(0xFF3B82F6)
+                              : Colors.transparent,
+                          width: 2,
+                        ),
+                      ),
+                    ),
+                  ),
+                ));
+              }
+              return handles;
+            }
+
+            Widget _canvas() {
+              return Padding(
+                padding: const EdgeInsets.all(12),
+                child: LayoutBuilder(
+                  builder: (context, cons) {
+                    final box = Size(cons.maxWidth, cons.maxHeight);
+                    return GestureDetector(
+                      onPanUpdate: (d) => _move(d.delta, box),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: const Color(0xFFF5C542),
+                            width: 1.5,
+                          ),
+                        ),
+                        child: Stack(
+                          children: [
+                            const Center(
+                              child: Text(
+                                'DRAG TO MOVE',
+                                style: TextStyle(
+                                  color: Colors.white24,
+                                  fontSize: 10,
+                                  letterSpacing: 3,
+                                ),
+                              ),
+                            ),
+                            OverlayRenderer(overlays: _items),
+                            ..._buildHandles(box),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              );
+            }
+
+            Widget _swatchBar() {
+              return Container(
+                height: 44,
+                color: const Color(0xFF141418),
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: _swatches.map((c) {
+                    return GestureDetector(
+                      onTap: () => _setColor(c),
+                      child: Container(
+                        margin: const EdgeInsets.all(6),
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: Color(c),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Colors.white24,
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              );
+            }
+
+            Widget _list() {
+              if (_items.isEmpty) {
+                return const Center(
+                  child: Text(
+                    'No overlays. Tap + to add.',
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 12,
+                    ),
+                  ),
+                );
+              }
+              return ListView.builder(
+                itemCount: _items.length,
+                itemBuilder: (_, i) {
+                  final it = _items[i];
+                  return ListTile(
+                    selected: _sel == it.id,
+                    selectedTileColor: Colors.white10,
+                    title: Text(
+                      it.content,
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(
+                            Icons.remove_circle_outline,
+                            color: Colors.white70,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              it.size = (it.size - 4).clamp(6.0, 200.0);
+                            });
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(
+                            Icons.add_circle_outline,
+                            color: Colors.white70,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              it.size = (it.size + 4).clamp(6.0, 200.0);
+                            });
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(
+                            Icons.delete_outline,
+                            color: Colors.redAccent,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _items.removeWhere((e) => e.id == it.id);
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                    onTap: () => setState(() => _sel = it.id),
+                  );
+                },
+              );
+            }
+
+            Widget _bottomBar() {
+              return Container(
+                height: 50,
+                color: const Color(0xFF0A0A0F),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(
+                  children: [
+                    FilledButton.icon(
+                      onPressed: _save,
+                      icon: const Icon(Icons.save),
+                      label: const Text('SAVE'),
+                    ),
+                    const Spacer(),
+                    FilledButton.icon(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.check),
+                      label: const Text('DONE'),
+                    ),
+                  ],
+                ),
+              );
+            }
+
             @override
             Widget build(BuildContext context) {
               return Scaffold(
                 backgroundColor: const Color(0xFF0A0A0F),
                 appBar: AppBar(
-                  title: const Text('GRAPHICS', style: TextStyle(
-                    fontSize: 14, letterSpacing: 3,
-                    fontWeight: FontWeight.w900)),
+                  title: const Text(
+                    'GRAPHICS',
+                    style: TextStyle(
+                      fontSize: 14,
+                      letterSpacing: 3,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
                   backgroundColor: const Color(0xFF141418),
                   actions: [
                     IconButton(
-                      icon: const Icon(Icons.add, color: Colors.tealAccent),
-                      onPressed: _addText),
+                      icon: const Icon(
+                        Icons.add,
+                        color: Colors.tealAccent,
+                      ),
+                      onPressed: _addText,
+                    ),
                     IconButton(
-                      icon: const Icon(Icons.fiber_manual_record,
-                        color: Colors.redAccent),
-                      onPressed: _addLive),
+                      icon: const Icon(
+                        Icons.fiber_manual_record,
+                        color: Colors.redAccent,
+                      ),
+                      onPressed: _addLive,
+                    ),
                   ],
                 ),
-                body: Column(children: [
-                  Expanded(flex: 3, child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: LayoutBuilder(builder: (context, cons) {
-                      final box = Size(cons.maxWidth, cons.maxHeight);
-                      return GestureDetector(
-                        onPanUpdate: (d) => _move(d.delta, box),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.black,
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                              color: const Color(0xFFF5C542), width: 1.5)),
-                          child: Stack(children: [
-                            const Center(child: Text('DRAG TO MOVE',
-                              style: TextStyle(color: Colors.white24,
-                                fontSize: 10, letterSpacing: 3))),
-                            OverlayRenderer(overlays: _items),
-                            ..._items.map((it) => Positioned(
-                              left: it.x * box.width - 70,
-                              top: it.y * box.height - 20,
-                              child: GestureDetector(
-                                onTap: () => setState(() => _sel = it.id),
-                                child: Container(width: 140, height: 40,
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                      color: _sel == it.id
-                                        ? const Color(0xFF3B82F6)
-                                        : Colors.transparent,
-                                      width: 2)))))),
-                          ]),
-                        ),
-                      );
-                    })),
-                  )),
-                  if (_sel != null) Container(
-                    height: 44, color: const Color(0xFF141418),
-                    child: ListView(scrollDirection: Axis.horizontal,
-                      children: _swatches.map((c) => GestureDetector(
-                        onTap: () => _setColor(c),
-                        child: Container(
-                          margin: const EdgeInsets.all(6),
-                          width: 32, height: 32,
-                          decoration: BoxDecoration(
-                            color: Color(c),
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: Colors.white24, width: 2))))).toList()),
-                  ),
-                  Expanded(flex: 2, child: Container(
-                    color: const Color(0xFF141418),
-                    child: _items.isEmpty
-                        ? const Center(child: Text(
-                            'No overlays. Tap + to add.',
-                            style: TextStyle(color: Colors.white54,
-                              fontSize: 12)))
-                        : ListView.builder(
-                            itemCount: _items.length,
-                            itemBuilder: (_, i) {
-                              final it = _items[i];
-                              return ListTile(
-                                selected: _sel == it.id,
-                                selectedTileColor: Colors.white10,
-                                title: Text(it.content, style: const TextStyle(
-                                  color: Colors.white)),
-                                trailing: Row(mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(
-                                        Icons.remove_circle_outline,
-                                        color: Colors.white70),
-                                      onPressed: () => setState(() =>
-                                        it.size = (it.size - 4)
-                                          .clamp(6.0, 200.0))),
-                                    IconButton(
-                                      icon: const Icon(
-                                        Icons.add_circle_outline,
-                                        color: Colors.white70),
-                                      onPressed: () => setState(() =>
-                                        it.size = (it.size + 4)
-                                          .clamp(6.0, 200.0))),
-                                    IconButton(
-                                      icon: const Icon(
-                                        Icons.delete_outline,
-                                        color: Colors.redAccent),
-                                      onPressed: () => setState(() =>
-                                        _items.removeWhere(
-                                          (e) => e.id == it.id))),
-                                  ]),
-                                onTap: () => setState(() => _sel = it.id),
-                              );
-                            })),
-                  )),
-                  Container(height: 50, color: const Color(0xFF0A0A0F),
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Row(children: [
-                      FilledButton.icon(onPressed: _save,
-                        icon: const Icon(Icons.save), label: const Text('SAVE')),
-                      const Spacer(),
-                      FilledButton.icon(
-                        onPressed: () => Navigator.pop(context),
-                        icon: const Icon(Icons.check),
-                        label: const Text('DONE')),
-                    ])),
-                ]),
+                body: Column(
+                  children: [
+                    Expanded(flex: 3, child: _canvas()),
+                    if (_sel != null) _swatchBar(),
+                    Expanded(flex: 2, child: _list()),
+                    _bottomBar(),
+                  ],
+                ),
               );
             }
           }
@@ -1185,92 +1066,143 @@ jobs:
           import 'package:uuid/uuid.dart';
           import '../models/account_item.dart';
           import '../services/account_store.dart';
+
           class AccountsScreen extends StatefulWidget {
             const AccountsScreen({super.key});
             @override
-            State<AccountsScreen> createState() => _AS();
+            State<AccountsScreen> createState() => _AccountsScreenState();
           }
-          class _AS extends State<AccountsScreen> {
+
+          class _AccountsScreenState extends State<AccountsScreen> {
             final _store = AccountStore();
             List<AccountItem> _items = [];
             bool _loading = true;
             final _platforms = <String, Map<String, String>>{
-              'YouTube': {'rtmp': 'rtmp://a.rtmp.youtube.com/live2',
-                'color': 'FF0000'},
-              'Twitch': {'rtmp': 'rtmp://live.twitch.tv/app',
-                'color': '9146FF'},
-              'Facebook': {'rtmp':
-                'rtmps://live-api-s.facebook.com:443/rtmp', 'color': '1877F2'},
-              'TikTok': {'rtmp': 'rtmp://push.tiktokv.com/live',
-                'color': '00F2EA'},
-              'Kick': {'rtmp':
-                'rtmp://fa723fc1b171.global-contribute.live-video.net/app',
-                'color': '53FC18'},
-              'Trovo': {'rtmp': 'rtmp://livepush.trovo.live/live',
-                'color': '27DB8A'},
-              'LinkedIn': {'rtmp': 'rtmp://rtmp-api.facebook.com:80/rtmp',
-                'color': '0A66C2'},
-              'X': {'rtmp': 'rtmp://ingest.pscp.tv:80/x', 'color': '1DA1F2'},
+              'YouTube': {
+                'rtmp': 'rtmp://a.rtmp.youtube.com/live2',
+                'color': 'FF0000',
+              },
+              'Twitch': {
+                'rtmp': 'rtmp://live.twitch.tv/app',
+                'color': '9146FF',
+              },
+              'Facebook': {
+                'rtmp': 'rtmps://live-api-s.facebook.com:443/rtmp',
+                'color': '1877F2',
+              },
+              'TikTok': {
+                'rtmp': 'rtmp://push.tiktokv.com/live',
+                'color': '00F2EA',
+              },
+              'Kick': {
+                'rtmp': 'rtmp://fa723fc1b171.global-contribute.live-video.net/app',
+                'color': '53FC18',
+              },
+              'Trovo': {
+                'rtmp': 'rtmp://livepush.trovo.live/live',
+                'color': '27DB8A',
+              },
+              'LinkedIn': {
+                'rtmp': 'rtmp://rtmp-api.facebook.com:80/rtmp',
+                'color': '0A66C2',
+              },
+              'X': {
+                'rtmp': 'rtmp://ingest.pscp.tv:80/x',
+                'color': '1DA1F2',
+              },
             };
+
             @override
             void initState() {
               super.initState();
               _load();
             }
+
             Future<void> _load() async {
               final items = await _store.loadAll();
-              if (mounted) setState(() {
-                _items = items;
-                _loading = false;
-              });
+              if (mounted) {
+                setState(() {
+                  _items = items;
+                  _loading = false;
+                });
+              }
             }
+
             IconData _icon(String name) {
               switch (name) {
-                case 'YouTube': return Icons.play_circle_fill;
-                case 'Twitch': return Icons.videogame_asset;
-                case 'Facebook': return Icons.facebook;
-                case 'TikTok': return Icons.music_note;
-                case 'Kick': return Icons.sports_esports;
-                case 'Trovo': return Icons.live_tv;
-                case 'LinkedIn': return Icons.business;
-                case 'X': return Icons.alternate_email;
+                case 'YouTube':
+                  return Icons.play_circle_fill;
+                case 'Twitch':
+                  return Icons.videogame_asset;
+                case 'Facebook':
+                  return Icons.facebook;
+                case 'TikTok':
+                  return Icons.music_note;
+                case 'Kick':
+                  return Icons.sports_esports;
+                case 'Trovo':
+                  return Icons.live_tv;
+                case 'LinkedIn':
+                  return Icons.business;
+                case 'X':
+                  return Icons.alternate_email;
               }
               return Icons.live_tv;
             }
+
             Color _color(String name) {
               final hex = _platforms[name]?['color'] ?? '3B82F6';
               return Color(int.parse('FF$hex', radix: 16));
             }
+
             Future<void> _link(String platform) async {
               final keyCtrl = TextEditingController();
               final nameCtrl = TextEditingController(text: platform);
               final ok = await showDialog<bool>(
                 context: context,
-                builder: (ctx) => AlertDialog(
-                  backgroundColor: const Color(0xFF141418),
-                  title: Text('Paste $platform stream key'),
-                  content: SingleChildScrollView(child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextField(controller: nameCtrl,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: const InputDecoration(
-                          labelText: 'Display name')),
-                      const SizedBox(height: 8),
-                      TextField(controller: keyCtrl, autofocus: true,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: const InputDecoration(
-                          labelText: 'Stream Key')),
-                    ])),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx, false),
-                      child: const Text('CANCEL')),
-                    FilledButton(onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text('LINK')),
-                  ],
-                ),
+                builder: (ctx) {
+                  return AlertDialog(
+                    backgroundColor: const Color(0xFF141418),
+                    title: Text('Paste $platform stream key'),
+                    content: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TextField(
+                            controller: nameCtrl,
+                            style: const TextStyle(color: Colors.white),
+                            decoration: const InputDecoration(
+                              labelText: 'Display name',
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: keyCtrl,
+                            autofocus: true,
+                            style: const TextStyle(color: Colors.white),
+                            decoration: const InputDecoration(
+                              labelText: 'Stream Key',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('CANCEL'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('LINK'),
+                      ),
+                    ],
+                  );
+                },
               );
-              if (ok != true || keyCtrl.text.trim().isEmpty) return;
+              if (ok != true || keyCtrl.text.trim().isEmpty) {
+                return;
+              }
               final u = [..._items];
               u.removeWhere((a) => a.platform == platform);
               u.add(AccountItem(
@@ -1281,26 +1213,38 @@ jobs:
                 rtmpUrl: _platforms[platform]?['rtmp'] ?? '',
               ));
               await _store.saveAll(u);
-              if (mounted) setState(() => _items = u);
+              if (mounted) {
+                setState(() => _items = u);
+              }
             }
+
             Future<void> _unlink(String id) async {
               final u = _items.where((a) => a.id != id).toList();
               await _store.saveAll(u);
-              if (mounted) setState(() => _items = u);
+              if (mounted) {
+                setState(() => _items = u);
+              }
             }
+
             @override
             Widget build(BuildContext context) {
               if (_loading) {
                 return const Scaffold(
                   backgroundColor: Color(0xFF0A0A0F),
-                  body: Center(child: CircularProgressIndicator()));
+                  body: Center(child: CircularProgressIndicator()),
+                );
               }
               return Scaffold(
                 backgroundColor: const Color(0xFF0A0A0F),
                 appBar: AppBar(
-                  title: const Text('LINK ACCOUNTS', style: TextStyle(
-                    fontSize: 14, letterSpacing: 3,
-                    fontWeight: FontWeight.w900)),
+                  title: const Text(
+                    'LINK ACCOUNTS',
+                    style: TextStyle(
+                      fontSize: 14,
+                      letterSpacing: 3,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
                   backgroundColor: const Color(0xFF141418),
                 ),
                 body: GridView.count(
@@ -1310,8 +1254,9 @@ jobs:
                   crossAxisSpacing: 12,
                   childAspectRatio: 1.5,
                   children: _platforms.keys.map((name) {
-                    final linked = _items.where(
-                      (a) => a.platform == name).toList();
+                    final linked = _items
+                        .where((a) => a.platform == name)
+                        .toList();
                     final isLinked = linked.isNotEmpty;
                     final color = _color(name);
                     return InkWell(
@@ -1323,7 +1268,8 @@ jobs:
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
                             color: isLinked ? color : Colors.white24,
-                            width: 2),
+                            width: 2,
+                          ),
                         ),
                         child: Padding(
                           padding: const EdgeInsets.all(12),
@@ -1331,32 +1277,50 @@ jobs:
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Row(children: [
-                                Icon(_icon(name), color: color, size: 28),
-                                const Spacer(),
-                                if (isLinked)
-                                  GestureDetector(
-                                    onTap: () => _unlink(linked.first.id),
-                                    child: const Icon(Icons.close,
-                                      color: Colors.white54, size: 18)),
-                              ]),
+                              Row(
+                                children: [
+                                  Icon(_icon(name), color: color, size: 28),
+                                  const Spacer(),
+                                  if (isLinked)
+                                    GestureDetector(
+                                      onTap: () => _unlink(linked.first.id),
+                                      child: const Icon(
+                                        Icons.close,
+                                        color: Colors.white54,
+                                        size: 18,
+                                      ),
+                                    ),
+                                ],
+                              ),
                               Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(name, style: const TextStyle(
-                                    color: Colors.white, fontSize: 14,
-                                    fontWeight: FontWeight.w900,
-                                    letterSpacing: 1)),
+                                  Text(
+                                    name,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 1,
+                                    ),
+                                  ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    isLinked ? linked.first.name
-                                      : 'Tap to paste key',
+                                    isLinked
+                                        ? linked.first.name
+                                        : 'Tap to paste key',
                                     style: TextStyle(
-                                      color: isLinked ? color : Colors.white54,
-                                      fontSize: 11),
-                                    overflow: TextOverflow.ellipsis),
-                                ]),
-                            ]),
+                                      color: isLinked
+                                          ? color
+                                          : Colors.white54,
+                                      fontSize: 11,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     );
@@ -1370,11 +1334,8 @@ jobs:
           cat > lib/screens/director_screen.dart << 'D'
           import 'dart:async';
           import 'package:flutter/material.dart';
-          import 'package:flutter_webrtc/flutter_webrtc.dart';
           import '../models/overlay_item.dart';
           import '../services/overlay_store.dart';
-          import '../services/webrtc_session.dart';
-          import '../services/config.dart';
           import '../widgets/overlay_renderer.dart';
           import 'graphics_editor.dart';
           import 'accounts_screen.dart';
@@ -1389,74 +1350,69 @@ jobs:
           class DirectorScreen extends StatefulWidget {
             const DirectorScreen({super.key});
             @override
-            State<DirectorScreen> createState() => _DS();
+            State<DirectorScreen> createState() => _DirectorScreenState();
           }
-          class _DS extends State<DirectorScreen> {
+
+          class _DirectorScreenState extends State<DirectorScreen> {
             bool _onAir = false;
             bool _menuOpen = false;
             int _tab = 0;
             int _sec = 0;
             int _camCount = 6;
             Timer? _ticker;
-            List<bool> _live = List.generate(15, (i) => i == 0);
-            List<bool> _prev = List.generate(15, (i) => i == 1);
+            final List<bool> _live = List.generate(15, (i) => i == 0);
+            final List<bool> _prev = List.generate(15, (i) => i == 1);
             final _overlayStore = OverlayStore();
             List<OverlayItem> _overlays = [];
-            WebRtcSession? _session;
-            String _conn = 'OFFLINE';
 
             @override
             void initState() {
               super.initState();
-              _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-                if (mounted) setState(() => _sec++);
-              });
-              _loadOverlays();
-              _connect();
-            }
-            Future<void> _connect() async {
-              setState(() => _conn = 'CONNECTING');
-              final s = WebRtcSession(
-                serverUrl: AppConfig.signalingUrl,
-                roomId: AppConfig.roomId,
-                clientId: 'dir_${DateTime.now().millisecondsSinceEpoch}',
-                isCaller: false,
+              _ticker = Timer.periodic(
+                const Duration(seconds: 1),
+                (_) {
+                  if (mounted) {
+                    setState(() => _sec++);
+                  }
+                },
               );
-              final ok = await s.start();
-              if (ok) {
-                _session = s;
-                setState(() => _conn = 'CONNECTED');
-              } else {
-                setState(() => _conn = 'RELAY OFFLINE');
-              }
+              _loadOverlays();
             }
+
             Future<void> _loadOverlays() async {
               final items = await _overlayStore.loadAll();
-              if (mounted) setState(() => _overlays = items);
+              if (mounted) {
+                setState(() => _overlays = items);
+              }
             }
+
             @override
             void dispose() {
               _ticker?.cancel();
-              _session?.stop();
               super.dispose();
             }
+
             String get _time {
               final h = (_sec ~/ 3600).toString().padLeft(2, '0');
               final m = ((_sec ~/ 60) % 60).toString().padLeft(2, '0');
               final s = (_sec % 60).toString().padLeft(2, '0');
               return '$h:$m:$s';
             }
+
             void _take() {
               setState(() {
                 final l = _live.indexOf(true);
                 final p = _prev.indexOf(true);
-                if (l < 0 || p < 0) return;
+                if (l < 0 || p < 0) {
+                  return;
+                }
                 _live[l] = false;
                 _prev[l] = true;
                 _prev[p] = false;
                 _live[p] = true;
               });
             }
+
             void _selPrev(int i) {
               setState(() {
                 for (var k = 0; k < _camCount; k++) {
@@ -1465,6 +1421,7 @@ jobs:
                 _prev[i] = true;
               });
             }
+
             void _setLive(int i) {
               setState(() {
                 for (var k = 0; k < _camCount; k++) {
@@ -1474,132 +1431,237 @@ jobs:
                 _live[i] = true;
               });
             }
+
             void _add() {
-              if (_camCount >= 15) return;
+              if (_camCount >= 15) {
+                return;
+              }
               setState(() => _camCount++);
             }
+
             Future<void> _rm(int i) async {
-              if (_camCount <= 1) return;
+              if (_camCount <= 1) {
+                return;
+              }
               final ok = await showDialog<bool>(
                 context: context,
-                builder: (ctx) => AlertDialog(
-                  backgroundColor: _panel,
-                  title: const Text('Remove camera?'),
-                  content: Text('Remove CAM ${i + 1}?'),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx, false),
-                      child: const Text('CANCEL')),
-                    FilledButton(onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text('REMOVE')),
-                  ],
-                ),
+                builder: (ctx) {
+                  return AlertDialog(
+                    backgroundColor: _panel,
+                    title: const Text('Remove camera?'),
+                    content: Text('Remove CAM ${i + 1}?'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('CANCEL'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('REMOVE'),
+                      ),
+                    ],
+                  );
+                },
               );
-              if (ok != true) return;
+              if (ok != true) {
+                return;
+              }
               setState(() {
                 _camCount--;
-                if (!_live.sublist(0, _camCount).contains(true) && _camCount > 0) {
+                if (!_live.sublist(0, _camCount).contains(true) &&
+                    _camCount > 0) {
                   _live[0] = true;
                 }
-                if (!_prev.sublist(0, _camCount).contains(true) && _camCount > 1) {
+                if (!_prev.sublist(0, _camCount).contains(true) &&
+                    _camCount > 1) {
                   _prev[1] = true;
                 }
               });
             }
+
             Future<void> _pick() async {
               final c = await showModalBottomSheet<int>(
                 context: context,
                 backgroundColor: _panel,
-                builder: (ctx) => SafeArea(child: SizedBox(
-                  height: MediaQuery.of(ctx).size.height * 0.75,
-                  child: Column(children: [
-                    const Padding(padding: EdgeInsets.all(16),
-                      child: Text('NUMBER OF CAMERAS', style: TextStyle(
-                        color: Colors.white70, fontSize: 12,
-                        letterSpacing: 3, fontWeight: FontWeight.w800))),
-                    const Divider(height: 1, color: Colors.white12),
-                    Expanded(child: ListView.builder(itemCount: 15,
-                      itemBuilder: (_, i) {
-                        final n = i + 1;
-                        return ListTile(
-                          title: Text('$n camera${n == 1 ? "" : "s"}',
-                            style: const TextStyle(color: Colors.white)),
-                          trailing: n == _camCount
-                            ? const Icon(Icons.check, color: Colors.tealAccent)
-                            : null,
-                          onTap: () => Navigator.pop(ctx, n),
-                        );
-                      })),
-                  ]))));
-              if (c != null) setState(() => _camCount = c);
+                builder: (ctx) {
+                  return SafeArea(
+                    child: SizedBox(
+                      height: MediaQuery.of(ctx).size.height * 0.75,
+                      child: Column(
+                        children: [
+                          const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Text(
+                              'NUMBER OF CAMERAS',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                                letterSpacing: 3,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          const Divider(height: 1, color: Colors.white12),
+                          Expanded(
+                            child: ListView.builder(
+                              itemCount: 15,
+                              itemBuilder: (_, i) {
+                                final n = i + 1;
+                                return ListTile(
+                                  title: Text(
+                                    '$n camera${n == 1 ? "" : "s"}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  trailing: n == _camCount
+                                      ? const Icon(
+                                          Icons.check,
+                                          color: Colors.tealAccent,
+                                        )
+                                      : null,
+                                  onTap: () => Navigator.pop(ctx, n),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              );
+              if (c != null) {
+                setState(() => _camCount = c);
+              }
             }
+
             Future<void> _openG() async {
               setState(() => _menuOpen = false);
-              await Navigator.push(context, MaterialPageRoute(
-                builder: (_) => const GraphicsEditor()));
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const GraphicsEditor(),
+                ),
+              );
               _loadOverlays();
             }
+
             void _openA() {
               setState(() => _menuOpen = false);
-              Navigator.push(context, MaterialPageRoute(
-                builder: (_) => const AccountsScreen()));
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const AccountsScreen(),
+                ),
+              );
             }
+
             @override
             Widget build(BuildContext context) {
               return Scaffold(
                 backgroundColor: _bg,
-                body: SafeArea(child: Stack(children: [
-                  Column(children: [
-                    _top(), _strip(), _tabs(),
-                    Expanded(child: _tab == 1 ? _grid() : _prog()),
-                    _bar(),
-                  ]),
-                  if (_menuOpen) _menu(),
-                ])),
+                body: SafeArea(
+                  child: Stack(
+                    children: [
+                      Column(
+                        children: [
+                          _top(),
+                          _strip(),
+                          _tabs(),
+                          Expanded(child: _tab == 1 ? _grid() : _prog()),
+                          _bar(),
+                        ],
+                      ),
+                      if (_menuOpen) _menu(),
+                    ],
+                  ),
+                ),
               );
             }
+
             Widget _top() {
-              return Container(height: 40, color: _bg,
+              return Container(
+                height: 40,
+                color: _bg,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
-                child: Row(children: [
-                  Container(width: 7, height: 7, decoration: BoxDecoration(
-                    color: _onAir ? _red : Colors.grey, shape: BoxShape.circle)),
-                  const SizedBox(width: 6),
-                  Text(_onAir ? 'ON AIR' : 'OFFLINE', style: TextStyle(
-                    color: _onAir ? _red : Colors.grey,
-                    fontSize: 10, fontWeight: FontWeight.w900,
-                    letterSpacing: 2)),
-                  const SizedBox(width: 10),
-                  Container(padding: const EdgeInsets.symmetric(
-                    horizontal: 5, vertical: 2),
-                    decoration: BoxDecoration(color: _blue.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(3)),
-                    child: Text('$_camCount CAMS', style: const TextStyle(
-                      color: _blue, fontSize: 8,
-                      fontWeight: FontWeight.w900, letterSpacing: 1))),
-                  const Spacer(),
-                  Text(_conn, style: TextStyle(
-                    color: _conn == 'CONNECTED'
-                      ? Colors.green : Colors.orangeAccent,
-                    fontSize: 9, letterSpacing: 1)),
-                  const SizedBox(width: 10),
-                  Text(_time, style: const TextStyle(color: Colors.white,
-                    fontSize: 10, fontWeight: FontWeight.w700)),
-                  const SizedBox(width: 10),
-                  GestureDetector(
-                    onTap: () => setState(() => _menuOpen = !_menuOpen),
-                    child: const Icon(Icons.menu, color: Colors.white, size: 18)),
-                ]));
+                child: Row(
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: _onAir ? _red : Colors.grey,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      _onAir ? 'ON AIR' : 'OFFLINE',
+                      style: TextStyle(
+                        color: _onAir ? _red : Colors.grey,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 5,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _blue.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                      child: Text(
+                        '$_camCount CAMS',
+                        style: const TextStyle(
+                          color: _blue,
+                          fontSize: 8,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      _time,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    GestureDetector(
+                      onTap: () => setState(() => _menuOpen = !_menuOpen),
+                      child: const Icon(
+                        Icons.menu,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
+                  ],
+                ),
+              );
             }
+
             Widget _strip() {
               final items = <Widget>[];
               for (var i = 0; i < _camCount; i++) {
                 items.add(Expanded(child: _tile(i)));
               }
               items.add(SizedBox(width: 48, child: _addTile()));
-              return Container(height: 64, color: _bg,
+              return Container(
+                height: 64,
+                color: _bg,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
-                child: Row(children: items));
+                child: Row(children: items),
+              );
             }
+
             Widget _tile(int i) {
               final l = _live[i];
               final p = _prev[i];
@@ -1616,137 +1678,285 @@ jobs:
                     decoration: BoxDecoration(
                       color: Colors.black,
                       border: Border.all(color: bc, width: bw),
-                      borderRadius: BorderRadius.circular(3)),
-                    child: Stack(children: [
-                      Positioned(top: 3, left: 3, child: Container(
-                        width: 5, height: 5,
-                        decoration: BoxDecoration(color: dc,
-                          shape: BoxShape.circle))),
-                      if (l) Positioned(top: 3, right: 3, child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 4, vertical: 1),
-                        decoration: BoxDecoration(color: _red,
-                          borderRadius: BorderRadius.circular(2)),
-                        child: const Text('LIVE', style: TextStyle(
-                          color: Colors.white, fontSize: 6,
-                          fontWeight: FontWeight.w900, letterSpacing: 1)))),
-                      Positioned(left: 4, bottom: 3, child: Text('CAM ${i + 1}',
-                        style: const TextStyle(color: Colors.white,
-                          fontSize: 7, fontWeight: FontWeight.w900,
-                          letterSpacing: 1))),
-                    ]),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: Stack(
+                      children: [
+                        Positioned(
+                          top: 3,
+                          left: 3,
+                          child: Container(
+                            width: 5,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: dc,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ),
+                        if (l)
+                          Positioned(
+                            top: 3,
+                            right: 3,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 1,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _red,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                              child: const Text(
+                                'LIVE',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 6,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1,
+                                ),
+                              ),
+                            ),
+                          ),
+                        Positioned(
+                          left: 4,
+                          bottom: 3,
+                          child: Text(
+                            'CAM ${i + 1}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 7,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               );
             }
+
             Widget _addTile() {
               return Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 2),
-                child: GestureDetector(onTap: _add, child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(3),
-                    border: Border.all(color: Colors.tealAccent, width: 1)),
-                  child: const Column(mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.add, color: Colors.tealAccent, size: 18),
-                      SizedBox(height: 2),
-                      Text('Add', style: TextStyle(
-                        color: Colors.tealAccent, fontSize: 7)),
-                    ]))),
+                child: GestureDetector(
+                  onTap: _add,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(3),
+                      border: Border.all(
+                        color: Colors.tealAccent,
+                        width: 1,
+                      ),
+                    ),
+                    child: const Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.add,
+                          color: Colors.tealAccent,
+                          size: 18,
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'Add',
+                          style: TextStyle(
+                            color: Colors.tealAccent,
+                            fontSize: 7,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               );
             }
+
             Widget _tabs() {
-              return Container(height: 24, color: _bg,
+              return Container(
+                height: 24,
+                color: _bg,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
-                child: Row(children: [
-                  _tabBtn('PROGRAM', 0),
-                  const SizedBox(width: 20),
-                  _tabBtn('MULTIVIEW', 1),
-                ]));
+                child: Row(
+                  children: [
+                    _tabBtn('PROGRAM', 0),
+                    const SizedBox(width: 20),
+                    _tabBtn('MULTIVIEW', 1),
+                  ],
+                ),
+              );
             }
+
             Widget _tabBtn(String label, int idx) {
               final a = _tab == idx;
               return GestureDetector(
                 onTap: () => setState(() => _tab = idx),
-                child: Text(label, style: TextStyle(
-                  color: a ? Colors.white : Colors.white54, fontSize: 9,
-                  fontWeight: a ? FontWeight.w900 : FontWeight.w600,
-                  letterSpacing: 2)));
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: a ? Colors.white : Colors.white54,
+                    fontSize: 9,
+                    fontWeight: a ? FontWeight.w900 : FontWeight.w600,
+                    letterSpacing: 2,
+                  ),
+                ),
+              );
             }
+
             Widget _prog() {
               return Padding(
                 padding: const EdgeInsets.fromLTRB(10, 2, 10, 2),
                 child: Container(
-                  decoration: BoxDecoration(color: Colors.black,
+                  decoration: BoxDecoration(
+                    color: Colors.black,
                     border: Border.all(color: _yellow, width: 1.5),
-                    borderRadius: BorderRadius.circular(4)),
-                  child: LayoutBuilder(builder: (context, cons) {
-                    final w = cons.maxWidth;
-                    final pi = _prev.indexOf(true);
-                    final pn = pi >= 0 ? pi + 1 : 1;
-                    final hasR = _session != null &&
-                      _session!.renderer.srcObject != null;
-                    return Stack(children: [
-                      if (hasR) Positioned.fill(child: RTCVideoView(
-                        _session!.renderer, mirror: false,
-                        objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover))
-                      else const Center(child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: LayoutBuilder(
+                    builder: (context, cons) {
+                      final w = cons.maxWidth;
+                      final pi = _prev.indexOf(true);
+                      final pn = pi >= 0 ? pi + 1 : 1;
+                      return Stack(
                         children: [
-                          Icon(Icons.videocam_off, color: Colors.white24, size: 32),
-                          SizedBox(height: 6),
-                          Text('WAITING FOR CAMERA', style: TextStyle(
-                            color: Colors.white38, fontSize: 10,
-                            letterSpacing: 2)),
-                        ])),
-                      Positioned(top: 6, left: 6, child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(color: _red,
-                          borderRadius: BorderRadius.circular(2)),
-                        child: const Text('PROGRAM', style: TextStyle(
-                          color: Colors.white, fontSize: 8,
-                          fontWeight: FontWeight.w900, letterSpacing: 1.5)))),
-                      if (_overlays.isNotEmpty) Positioned.fill(
-                        child: OverlayRenderer(overlays: _overlays)),
-                      Positioned(right: 8, bottom: 8,
-                        width: w * 0.28, height: w * 0.28 * 9 / 16,
-                        child: Container(
-                          decoration: BoxDecoration(color: Colors.black,
-                            border: Border.all(color: _yellow, width: 1.5),
-                            borderRadius: BorderRadius.circular(3)),
-                          child: Stack(children: [
-                            Center(child: Text('CAM $pn',
-                              style: const TextStyle(color: Colors.white24,
-                                fontSize: 11, fontWeight: FontWeight.w900,
-                                letterSpacing: 2))),
-                            Positioned(top: 3, left: 3, child: Container(
+                          const Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.videocam_off,
+                                  color: Colors.white24,
+                                  size: 32,
+                                ),
+                                SizedBox(height: 6),
+                                Text(
+                                  'WAITING FOR CAMERA',
+                                  style: TextStyle(
+                                    color: Colors.white38,
+                                    fontSize: 10,
+                                    letterSpacing: 2,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Positioned(
+                            top: 6,
+                            left: 6,
+                            child: Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 4, vertical: 1),
-                              decoration: BoxDecoration(color: _yellow,
-                                borderRadius: BorderRadius.circular(2)),
-                              child: const Text('PREVIEW', style: TextStyle(
-                                color: Colors.black, fontSize: 6,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 1)))),
-                          ]))),
-                    ]);
-                  }),
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _red,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                              child: const Text(
+                                'PROGRAM',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1.5,
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (_overlays.isNotEmpty)
+                            Positioned.fill(
+                              child: OverlayRenderer(
+                                overlays: _overlays,
+                              ),
+                            ),
+                          Positioned(
+                            right: 8,
+                            bottom: 8,
+                            width: w * 0.28,
+                            height: w * 0.28 * 9 / 16,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.black,
+                                border: Border.all(
+                                  color: _yellow,
+                                  width: 1.5,
+                                ),
+                                borderRadius: BorderRadius.circular(3),
+                              ),
+                              child: Stack(
+                                children: [
+                                  Center(
+                                    child: Text(
+                                      'CAM $pn',
+                                      style: const TextStyle(
+                                        color: Colors.white24,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 2,
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    top: 3,
+                                    left: 3,
+                                    child: Container(
+                                      padding:
+                                          const EdgeInsets.symmetric(
+                                        horizontal: 4,
+                                        vertical: 1,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: _yellow,
+                                        borderRadius:
+                                            BorderRadius.circular(2),
+                                      ),
+                                      child: const Text(
+                                        'PREVIEW',
+                                        style: TextStyle(
+                                          color: Colors.black,
+                                          fontSize: 6,
+                                          fontWeight: FontWeight.w900,
+                                          letterSpacing: 1,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
                 ),
               );
             }
+
             Widget _grid() {
               int c;
-              if (_camCount <= 4) c = 2;
-              else if (_camCount <= 9) c = 3;
-              else if (_camCount <= 12) c = 4;
-              else c = 5;
+              if (_camCount <= 4) {
+                c = 2;
+              } else if (_camCount <= 9) {
+                c = 3;
+              } else if (_camCount <= 12) {
+                c = 4;
+              } else {
+                c = 5;
+              }
               return Padding(
                 padding: const EdgeInsets.all(10),
-                child: GridView.builder(itemCount: _camCount,
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: c, mainAxisSpacing: 6,
-                    crossAxisSpacing: 6, childAspectRatio: 16 / 9),
+                child: GridView.builder(
+                  itemCount: _camCount,
+                  gridDelegate:
+                      SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: c,
+                    mainAxisSpacing: 6,
+                    crossAxisSpacing: 6,
+                    childAspectRatio: 16 / 9,
+                  ),
                   itemBuilder: (_, i) {
                     final l = _live[i];
                     final p = _prev[i];
@@ -1755,95 +1965,208 @@ jobs:
                       onTap: () => _selPrev(i),
                       onLongPress: () => _rm(i),
                       child: Container(
-                        decoration: BoxDecoration(color: Colors.black,
+                        decoration: BoxDecoration(
+                          color: Colors.black,
                           border: Border.all(color: bc, width: 1.5),
-                          borderRadius: BorderRadius.circular(3)),
-                        child: Center(child: Text('CAM ${i + 1}',
-                          style: const TextStyle(color: Colors.white70,
-                            fontSize: 10, fontWeight: FontWeight.w800,
-                            letterSpacing: 2)))),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Center(
+                          child: Text(
+                            'CAM ${i + 1}',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 2,
+                            ),
+                          ),
+                        ),
+                      ),
                     );
-                  }),
+                  },
+                ),
               );
             }
+
             Widget _bar() {
-              return Container(height: 48, color: _bg,
+              return Container(
+                height: 48,
+                color: _bg,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
-                child: Row(children: [
-                  GestureDetector(
-                    onTap: () => setState(() => _onAir = !_onAir),
-                    child: Container(height: 36,
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      decoration: BoxDecoration(
-                        color: _onAir ? _red : const Color(0xFF1E293B),
-                        borderRadius: BorderRadius.circular(5)),
-                      child: Row(children: [
-                        Icon(_onAir ? Icons.stop_circle : Icons.podcasts,
-                          color: Colors.white, size: 16),
-                        const SizedBox(width: 6),
-                        Text(_onAir ? 'END STREAM' : 'GO LIVE',
-                          style: const TextStyle(color: Colors.white,
-                            fontSize: 11, fontWeight: FontWeight.w900,
-                            letterSpacing: 1.2)),
-                      ]))),
-                  const Spacer(),
-                  GestureDetector(onTap: _take, child: Container(
-                    height: 36,
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    decoration: BoxDecoration(color: _red,
-                      borderRadius: BorderRadius.circular(5)),
-                    child: const Row(children: [
-                      Icon(Icons.fiber_manual_record,
-                        color: Colors.white, size: 10),
-                      SizedBox(width: 6),
-                      Text('TAKE', style: TextStyle(color: Colors.white,
-                        fontSize: 12, fontWeight: FontWeight.w900,
-                        letterSpacing: 2.5)),
-                    ]))),
-                ]));
+                child: Row(
+                  children: [
+                    GestureDetector(
+                      onTap: () => setState(() => _onAir = !_onAir),
+                      child: Container(
+                        height: 36,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _onAir
+                              ? _red
+                              : const Color(0xFF1E293B),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              _onAir
+                                  ? Icons.stop_circle
+                                  : Icons.podcasts,
+                              color: Colors.white,
+                              size: 16,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              _onAir ? 'END STREAM' : 'GO LIVE',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    GestureDetector(
+                      onTap: _take,
+                      child: Container(
+                        height: 36,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _red,
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(
+                              Icons.fiber_manual_record,
+                              color: Colors.white,
+                              size: 10,
+                            ),
+                            SizedBox(width: 6),
+                            Text(
+                              'TAKE',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 2.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
             }
+
             Widget _menu() {
-              return Positioned(top: 0, right: 0, bottom: 0,
-                child: Container(width: 220, color: _bg,
-                  child: Column(children: [
-                    Container(height: 40,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      decoration: const BoxDecoration(border: Border(
-                        bottom: BorderSide(color: _grey))),
-                      child: Row(children: [
-                        const Text('Menu', style: TextStyle(
-                          color: Colors.white, fontSize: 12,
-                          fontWeight: FontWeight.w800)),
-                        const Spacer(),
-                        GestureDetector(
-                          onTap: () => setState(() => _menuOpen = false),
-                          child: const Icon(Icons.close,
-                            color: Colors.white, size: 16)),
-                      ])),
-                    _mi(Icons.grid_view, 'Camera Count', () {
-                      setState(() => _menuOpen = false);
-                      _pick();
-                    }),
-                    _mi(Icons.add, 'Add Camera', () {
-                      setState(() => _menuOpen = false);
-                      _add();
-                    }),
-                    _mi(Icons.layers, 'Graphics', _openG, teal: true),
-                    _mi(Icons.link, 'Link Accounts', _openA),
-                  ])));
+              return Positioned(
+                top: 0,
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  width: 220,
+                  color: _bg,
+                  child: Column(
+                    children: [
+                      Container(
+                        height: 40,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                        ),
+                        decoration: const BoxDecoration(
+                          border: Border(
+                            bottom: BorderSide(color: _grey),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            const Text(
+                              'Menu',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const Spacer(),
+                            GestureDetector(
+                              onTap: () =>
+                                  setState(() => _menuOpen = false),
+                              child: const Icon(
+                                Icons.close,
+                                color: Colors.white,
+                                size: 16,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      _mi(Icons.grid_view, 'Camera Count', () {
+                        setState(() => _menuOpen = false);
+                        _pick();
+                      }),
+                      _mi(Icons.add, 'Add Camera', () {
+                        setState(() => _menuOpen = false);
+                        _add();
+                      }),
+                      _mi(Icons.layers, 'Graphics', _openG, teal: true),
+                      _mi(Icons.link, 'Link Accounts', _openA),
+                    ],
+                  ),
+                ),
+              );
             }
-            Widget _mi(IconData icon, String label, VoidCallback onTap,
-                {bool teal = false}) {
-              return InkWell(onTap: onTap, child: SizedBox(height: 38,
-                child: Padding(padding: const EdgeInsets.symmetric(
-                  horizontal: 12), child: Row(children: [
-                    Icon(icon, color: teal ? Colors.tealAccent
-                      : Colors.white70, size: 16),
-                    const SizedBox(width: 10),
-                    Text(label, style: TextStyle(
-                      color: teal ? Colors.tealAccent : Colors.white,
-                      fontSize: 11, fontWeight: FontWeight.w600)),
-                  ]))));
+
+            Widget _mi(
+              IconData icon,
+              String label,
+              VoidCallback onTap, {
+              bool teal = false,
+            }) {
+              return InkWell(
+                onTap: onTap,
+                child: SizedBox(
+                  height: 38,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          icon,
+                          color: teal
+                              ? Colors.tealAccent
+                              : Colors.white70,
+                          size: 16,
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          label,
+                          style: TextStyle(
+                            color: teal
+                                ? Colors.tealAccent
+                                : Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
             }
           }
           D
@@ -1852,11 +2175,10 @@ jobs:
         run: |
           flutter create --platforms=android --org com.yourcompany --project-name mobile_tv_studio .
           rm -f pubspec.lock
-          mkdir -p android/app/src/main/kotlin/com/yourcompany/studio
-          cp /tmp/backup/MainActivity.kt android/app/src/main/kotlin/com/yourcompany/studio/MainActivity.kt
           flutter pub get
           dart run flutter_launcher_icons
           dart run flutter_native_splash:create
+
           cat > android/gradle/wrapper/gradle-wrapper.properties << 'E'
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
@@ -1864,6 +2186,7 @@ jobs:
           zipStorePath=wrapper/dists
           distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip
           E
+
           cat > android/settings.gradle << 'E'
           pluginManagement {
               def fp = { def p = new Properties(); file("local.properties").withInputStream { p.load(it) }; return p.getProperty("flutter.sdk") }()
@@ -1877,6 +2200,7 @@ jobs:
           }
           include ":app"
           E
+
           cat > android/build.gradle << 'E'
           ext { kotlin_version = "2.1.0" }
           allprojects { repositories { google(); mavenCentral() } }
@@ -1886,9 +2210,9 @@ jobs:
               afterEvaluate { p ->
                   if (p.hasProperty('android')) {
                       p.android {
-                          if (compileSdkVersion == null) compileSdkVersion 34
+                          if (compileSdkVersion == null) compileSdkVersion 35
                           if (defaultConfig != null) {
-                              if (defaultConfig.targetSdkVersion == null) defaultConfig.targetSdkVersion 34
+                              if (defaultConfig.targetSdkVersion == null) defaultConfig.targetSdkVersion 35
                               if (defaultConfig.minSdkVersion == null) defaultConfig.minSdkVersion 24
                           }
                       }
@@ -1898,12 +2222,14 @@ jobs:
           subprojects { project.evaluationDependsOn(":app") }
           tasks.register("clean", Delete) { delete rootProject.buildDir }
           E
+
           cat >> android/gradle.properties << 'E'
 
           android.useAndroidX=true
           android.enableJetifier=true
           org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
           E
+
           cat > android/app/build.gradle << 'E'
           def lp = new Properties()
           def lpf = rootProject.file('local.properties')
@@ -1914,7 +2240,7 @@ jobs:
           apply from: "$fr/packages/flutter_tools/gradle/flutter.gradle"
           android {
               namespace "com.yourcompany.studio"
-              compileSdk 34
+              compileSdk 35
               ndkVersion "26.1.10909125"
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_17
@@ -1924,7 +2250,7 @@ jobs:
               defaultConfig {
                   applicationId "com.yourcompany.studio"
                   minSdk 24
-                  targetSdk 34
+                  targetSdk 35
                   versionCode 1
                   versionName "1.0"
               }
@@ -1938,6 +2264,7 @@ jobs:
           }
           flutter { source '../..' }
           E
+
           cat > android/app/src/main/AndroidManifest.xml << 'XML'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
                     xmlns:tools="http://schemas.android.com/tools">
@@ -1945,9 +2272,6 @@ jobs:
               <uses-permission android:name="android.permission.RECORD_AUDIO" />
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-              <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
-              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
               <uses-feature android:name="android.hardware.camera" android:required="true" />
               <uses-feature android:name="android.hardware.microphone" android:required="true" />
               <application android:label="Mobile TV Studio"
@@ -1974,6 +2298,7 @@ jobs:
               </application>
           </manifest>
           XML
+
           flutter build apk --release
 
       - uses: actions/upload-artifact@v4
