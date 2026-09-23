@@ -53,7 +53,7 @@ jobs:
             shared_preferences: ^2.3.2
             uuid: ^4.5.0
             flutter_webrtc: ^0.12.5
-            rtmp_streaming: ^2.0.1
+            rtmp_broadcaster: ^3.1.0
             mic_info: ^0.0.5
             permission_handler: ^11.3.1
             wakelock_plus: ^1.2.8
@@ -234,16 +234,12 @@ jobs:
           cat > lib/services/streaming_service.dart << 'D'
           import 'dart:async';
           import 'package:flutter/foundation.dart';
-          import 'package:rtmp_streaming/rtmp_streaming.dart';
+          import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
           import 'package:mic_info/mic_info.dart';
 
           class StreamingService {
-            static final _plugin = RtmpStreaming();
+            static final _plugin = RtmpBroadcaster();
             static StreamSubscription? _eventSub;
-
-            static Future<List<CameraDescription>> get cameras async {
-              return await _plugin.availableCameras();
-            }
 
             static Future<void> initialize() async {
               await _plugin.initialize();
@@ -267,9 +263,11 @@ jobs:
               int bitrate = 2500000,
             }) async {
               final url = '$rtmpUrl/$streamKey';
-              await _plugin.startVideoStreaming(
+              await _plugin.startStreaming(
                 url,
-                StreamingProtocol.rtmp,
+                width: width,
+                height: height,
+                fps: fps,
                 bitrate: bitrate,
               );
             }
@@ -279,7 +277,7 @@ jobs:
             }
 
             static Future<void> startRecording(String path) async {
-              await _plugin.startVideoRecording(path);
+              await _plugin.startRecording(path);
             }
 
             static Future<void> stopRecording() async {
@@ -291,7 +289,7 @@ jobs:
             }
 
             static Future<void> muteMic(bool muted) async {
-              await _plugin.setHasAudio(!muted);
+              await _plugin.muteMic(muted);
             }
 
             static Future<void> dispose() async {
@@ -462,7 +460,7 @@ jobs:
           # --- camera_screen.dart ---
           cat > lib/screens/camera_screen.dart << 'D'
           import 'package:flutter/material.dart';
-          import 'package:rtmp_streaming/rtmp_streaming.dart';
+          import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
           import '../services/streaming_service.dart';
           import '../services/account_store.dart';
 
