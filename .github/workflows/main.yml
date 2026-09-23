@@ -2239,7 +2239,7 @@ jobs:
           apply plugin: 'kotlin-android'
           apply from: "$fr/packages/flutter_tools/gradle/flutter.gradle"
           android {
-              namespace "com.yourcompany.studio"
+              namespace "com.yourcompany.mobile_tv_studio"
               compileSdk 35
               ndkVersion "26.1.10909125"
               compileOptions {
@@ -2248,7 +2248,7 @@ jobs:
               }
               kotlinOptions { jvmTarget = '17' }
               defaultConfig {
-                  applicationId "com.yourcompany.studio"
+                  applicationId "com.yourcompany.mobile_tv_studio"
                   minSdk 24
                   targetSdk 35
                   versionCode 1
