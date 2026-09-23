@@ -10,7 +10,7 @@ jobs:
         with: {distribution: temurin, java-version: '17'}
 
       - uses: subosito/flutter-action@v2
-        with: {flutter-version: 3.24.0, channel: stable, cache: true}
+        with: {flutter-version: '3.29.0', channel: stable, cache: true}
 
       # 1) Generate project scaffolding FIRST
       - name: Flutter create
@@ -81,6 +81,8 @@ jobs:
             android_12:
               color: "#0A0A0F"
               image: "assets/icon/app_icon.png"
+          dependency_overrides:
+            package_info_plus: ^8.0.0
           P
 
       # 3) Write all Dart sources
@@ -1474,7 +1476,6 @@ jobs:
           include ":app"
           E
 
-          # FIX: Add subprojects block to set compileSdkVersion for all plugins
           cat > android/build.gradle << 'E'
           allprojects {
               repositories {
