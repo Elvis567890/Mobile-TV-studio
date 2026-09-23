@@ -457,7 +457,7 @@ jobs:
           }
           D
 
-          # --- camera_screen.dart (rewritten for RTMP + recording) ---
+          # --- camera_screen.dart ---
           cat > lib/screens/camera_screen.dart << 'D'
           import 'package:flutter/material.dart';
           import 'package:rtmp_streaming/rtmp_streaming.dart';
@@ -640,7 +640,7 @@ jobs:
           }
           D
 
-          # --- graphics_editor.dart (unchanged) ---
+          # --- graphics_editor.dart ---
           cat > lib/screens/graphics_editor.dart << 'D'
           import 'package:flutter/material.dart';
           import 'package:uuid/uuid.dart';
@@ -817,7 +817,7 @@ jobs:
           }
           D
 
-          # --- accounts_screen.dart (unchanged) ---
+          # --- accounts_screen.dart ---
           cat > lib/screens/accounts_screen.dart << 'D'
           import 'package:flutter/material.dart';
           import 'package:uuid/uuid.dart';
@@ -961,7 +961,7 @@ jobs:
           }
           D
 
-          # --- director_screen.dart (updated with WebRTC + Live Camera panel) ---
+          # --- director_screen.dart ---
           cat > lib/screens/director_screen.dart << 'D'
           import 'dart:async';
           import 'package:flutter/material.dart';
@@ -1474,6 +1474,7 @@ jobs:
           include ":app"
           E
 
+          # FIX: Add subprojects block to set compileSdkVersion for all plugins
           cat > android/build.gradle << 'E'
           allprojects {
               repositories {
@@ -1484,6 +1485,17 @@ jobs:
           }
           rootProject.buildDir = "../build"
           subprojects { project.buildDir = "${rootProject.buildDir}/${project.name}" }
+          subprojects {
+              afterEvaluate { project ->
+                  if (project.plugins.hasPlugin("com.android.application") ||
+                      project.plugins.hasPlugin("com.android.library")) {
+                      project.android {
+                          compileSdkVersion 34
+                          buildToolsVersion "34.0.0"
+                      }
+                  }
+              }
+          }
           subprojects { project.evaluationDependsOn(":app") }
           tasks.register("clean", Delete) { delete rootProject.buildDir }
           E
