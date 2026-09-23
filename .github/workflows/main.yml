@@ -35,7 +35,7 @@ jobs:
               f2 = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 68)
           except Exception:
               f1 = f2 = ImageFont.load_default()
-          d.text((512,800),'MOBILE TV',fill=(255,255,255,255),anchor='mm',font=f1)
+          d.text((512,800),'ABRIMAX',fill=(255,255,255,255),anchor='mm',font=f1)
           d.text((512,900),'STUDIO',fill=(239,68,68,255),anchor='mm',font=f2)
           img.save('assets/icon/app_icon.png')
           PY
@@ -52,6 +52,11 @@ jobs:
             camera: ^0.11.0+2
             shared_preferences: ^2.3.2
             uuid: ^4.5.0
+            flutter_webrtc: ^0.12.5
+            rtmp_streaming: ^2.1.0
+            mic_info: ^0.0.5
+            permission_handler: ^11.3.1
+            wakelock_plus: ^1.2.8
           dev_dependencies:
             flutter_test:
               sdk: flutter
@@ -81,25 +86,34 @@ jobs:
       # 3) Write all Dart sources
       - name: Write Dart files
         run: |
+          # --- main.dart ---
           cat > lib/main.dart << 'D'
           import 'package:flutter/material.dart';
           import 'package:flutter/services.dart';
+          import 'package:permission_handler/permission_handler.dart';
           import 'screens/role_chooser.dart';
+
           void main() async {
             WidgetsFlutterBinding.ensureInitialized();
             await SystemChrome.setPreferredOrientations([
               DeviceOrientation.landscapeLeft,
               DeviceOrientation.landscapeRight,
             ]);
+            await [
+              Permission.camera,
+              Permission.microphone,
+              Permission.notification,
+            ].request();
             runApp(const App());
           }
+
           class App extends StatelessWidget {
             const App({super.key});
             @override
             Widget build(BuildContext context) {
               return MaterialApp(
                 debugShowCheckedModeBanner: false,
-                title: 'Mobile TV Studio',
+                title: 'abrimax',
                 theme: ThemeData(
                   useMaterial3: true,
                   brightness: Brightness.dark,
@@ -111,6 +125,7 @@ jobs:
           }
           D
 
+          # --- models ---
           cat > lib/models/overlay_item.dart << 'D'
           enum OverlayKind { text, liveBadge }
           class OverlayItem {
@@ -122,12 +137,8 @@ jobs:
             double size;
             int color;
             OverlayItem({
-              required this.id,
-              required this.kind,
-              required this.content,
-              required this.x,
-              required this.y,
-              this.size = 20,
+              required this.id, required this.kind, required this.content,
+              required this.x, required this.y, this.size = 20,
               this.color = 0xFFFFFFFF,
             });
             Map<String, dynamic> toJson() => {
@@ -171,6 +182,7 @@ jobs:
           }
           D
 
+          # --- services ---
           cat > lib/services/overlay_store.dart << 'D'
           import 'dart:convert';
           import 'package:shared_preferences/shared_preferences.dart';
@@ -217,6 +229,77 @@ jobs:
           }
           D
 
+          cat > lib/services/streaming_service.dart << 'D'
+          import 'dart:async';
+          import 'package:flutter/foundation.dart';
+          import 'package:rtmp_streaming/rtmp_streaming.dart';
+          import 'package:mic_info/mic_info.dart';
+
+          class StreamingService {
+            static final _plugin = RtmpStreaming();
+            static StreamSubscription? _eventSub;
+
+            static Future<List<CameraDescription>> get cameras async {
+              return await _plugin.availableCameras();
+            }
+
+            static Future<void> initialize() async {
+              await _plugin.initialize();
+            }
+
+            static Future<List<String>> detectUsbMics() async {
+              try {
+                final mics = await MicInfo.getWiredMicrophones();
+                return mics.map((m) => m.productName).toList();
+              } catch (e) {
+                return [];
+              }
+            }
+
+            static Future<void> startStream({
+              required String rtmpUrl,
+              required String streamKey,
+              int width = 1280,
+              int height = 720,
+              int fps = 30,
+              int bitrate = 2500000,
+            }) async {
+              final url = '$rtmpUrl/$streamKey';
+              await _plugin.startVideoStreaming(
+                url,
+                StreamingProtocol.rtmp,
+                bitrate: bitrate,
+              );
+            }
+
+            static Future<void> stopStream() async {
+              await _plugin.stopStreaming();
+            }
+
+            static Future<void> startRecording(String path) async {
+              await _plugin.startVideoRecording(path);
+            }
+
+            static Future<void> stopRecording() async {
+              await _plugin.stopRecording();
+            }
+
+            static Future<void> switchCamera() async {
+              await _plugin.switchCamera();
+            }
+
+            static Future<void> muteMic(bool muted) async {
+              await _plugin.setHasAudio(!muted);
+            }
+
+            static Future<void> dispose() async {
+              await _eventSub?.cancel();
+              await _plugin.dispose();
+            }
+          }
+          D
+
+          # --- widgets ---
           cat > lib/widgets/overlay_renderer.dart << 'D'
           import 'package:flutter/material.dart';
           import '../models/overlay_item.dart';
@@ -319,6 +402,7 @@ jobs:
           }
           D
 
+          # --- screens ---
           cat > lib/screens/role_chooser.dart << 'D'
           import 'package:flutter/material.dart';
           import 'director_screen.dart';
@@ -333,7 +417,7 @@ jobs:
                   padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                   child: Column(children: [
                     const SizedBox(height: 20),
-                    const Text('MOBILE TV STUDIO', style: TextStyle(
+                    const Text('ABRIMAX STUDIO', style: TextStyle(
                       fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: 4)),
                     const SizedBox(height: 4),
                     const Text('What is this phone?',
@@ -373,19 +457,40 @@ jobs:
           }
           D
 
+          # --- camera_screen.dart (rewritten for RTMP + recording) ---
           cat > lib/screens/camera_screen.dart << 'D'
           import 'package:flutter/material.dart';
-          import '../widgets/live_camera.dart';
+          import 'package:rtmp_streaming/rtmp_streaming.dart';
+          import '../services/streaming_service.dart';
+          import '../services/account_store.dart';
+
           class CameraScreen extends StatefulWidget {
             const CameraScreen({super.key});
             @override
             State<CameraScreen> createState() => _CameraScreenState();
           }
+
           class _CameraScreenState extends State<CameraScreen> {
             bool _live = false;
-            bool _front = false;
+            bool _recording = false;
+            bool _micMuted = false;
             String _quality = '720p';
             int _fps = 30;
+            String _status = 'READY';
+            List<String> _usbMics = [];
+
+            @override
+            void initState() {
+              super.initState();
+              _init();
+            }
+
+            Future<void> _init() async {
+              await StreamingService.initialize();
+              final mics = await StreamingService.detectUsbMics();
+              if (mounted) setState(() => _usbMics = mics);
+            }
+
             void _cycleQ() {
               setState(() {
                 if (_quality == '720p') _quality = '480p';
@@ -393,12 +498,53 @@ jobs:
                 else _quality = '720p';
               });
             }
+
             void _cycleF() {
               setState(() {
                 final o = [24, 25, 30, 35, 60];
                 _fps = o[(o.indexOf(_fps) + 1) % o.length];
               });
             }
+
+            Future<void> _toggleLive() async {
+              if (_live) {
+                await StreamingService.stopStream();
+                setState(() { _live = false; _status = 'STOPPED'; });
+              } else {
+                final store = AccountStore();
+                final accounts = await store.loadAll();
+                if (accounts.isEmpty) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Link an account first (Director > Menu > Link Accounts)')));
+                  }
+                  return;
+                }
+                final acct = accounts.first;
+                setState(() => _status = 'CONNECTING...');
+                try {
+                  await StreamingService.startStream(
+                    rtmpUrl: acct.rtmpUrl,
+                    streamKey: acct.streamKey,
+                  );
+                  setState(() { _live = true; _status = 'LIVE'; });
+                } catch (e) {
+                  setState(() => _status = 'ERROR: $e');
+                }
+              }
+            }
+
+            Future<void> _toggleRecord() async {
+              if (_recording) {
+                await StreamingService.stopRecording();
+                setState(() { _recording = false; _status = 'RECORDING SAVED'; });
+              } else {
+                final path = '/storage/emulated/0/Movies/abrimax_${DateTime.now().millisecondsSinceEpoch}.mp4';
+                await StreamingService.startRecording(path);
+                setState(() { _recording = true; _status = 'RECORDING'; });
+              }
+            }
+
             @override
             Widget build(BuildContext context) {
               return Scaffold(
@@ -407,12 +553,18 @@ jobs:
                   title: const Text('CAMERA NODE', style: TextStyle(
                     fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)),
                   backgroundColor: const Color(0xFF141418),
-                  actions: [Padding(padding: const EdgeInsets.only(right: 12),
-                    child: Center(child: Text(
-                      '$_quality - ${_fps}fps - ${_live ? "LIVE" : "OFFLINE"}',
-                      style: TextStyle(
-                        color: _live ? Colors.green : Colors.grey,
-                        fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1))))],
+                  actions: [
+                    Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: Center(child: Text(
+                        _status,
+                        style: TextStyle(
+                          color: _live ? Colors.green : (_recording ? Colors.orange : Colors.grey),
+                          fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1,
+                        ),
+                      )),
+                    ),
+                  ],
                 ),
                 body: Row(children: [
                   Expanded(child: Container(
@@ -421,25 +573,57 @@ jobs:
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: _live ? Colors.red : Colors.white24,
                         width: _live ? 3 : 1)),
-                    child: ClipRRect(borderRadius: BorderRadius.circular(6),
-                      child: LiveCamera(front: _front)))),
+                    child: const ClipRRect(borderRadius: BorderRadius.all(Radius.circular(6)),
+                      child: RtmpCameraPreview()),
+                  )),
                   Container(width: 160, color: const Color(0xFF141418),
                     padding: const EdgeInsets.all(8),
                     child: SingleChildScrollView(child: Column(children: [
+                      if (_usbMics.isNotEmpty)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: Colors.teal.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: Colors.tealAccent.withOpacity(0.4)),
+                          ),
+                          child: Row(children: [
+                            const Icon(Icons.usb, color: Colors.tealAccent, size: 14),
+                            const SizedBox(width: 4),
+                            Expanded(child: Text(
+                              _usbMics.first,
+                              style: const TextStyle(color: Colors.tealAccent, fontSize: 8),
+                              overflow: TextOverflow.ellipsis,
+                            )),
+                          ]),
+                        ),
                       _btn(_live ? Icons.stop : Icons.play_arrow, _live ? 'STOP' : 'GO LIVE',
-                        _live ? Colors.red : Colors.green, 78,
-                        () => setState(() => _live = !_live)),
+                        _live ? Colors.red : Colors.green, 78, _toggleLive),
+                      const SizedBox(height: 8),
+                      _btn(_recording ? Icons.stop : Icons.fiber_manual_record,
+                        _recording ? 'STOP REC' : 'RECORD',
+                        _recording ? Colors.red : Colors.orangeAccent, 64, _toggleRecord),
                       const SizedBox(height: 8),
                       _btn(Icons.high_quality, _quality, Colors.blue, 64, _cycleQ),
                       const SizedBox(height: 8),
                       _btn(Icons.speed, '$_fps FPS', Colors.tealAccent, 64, _cycleF),
                       const SizedBox(height: 8),
-                      _btn(Icons.flip_camera_android, _front ? 'FRONT' : 'REAR',
-                        Colors.purpleAccent, 64, () => setState(() => _front = !_front)),
+                      _btn(_micMuted ? Icons.mic_off : Icons.mic,
+                        _micMuted ? 'MUTED' : 'MIC ON',
+                        _micMuted ? Colors.redAccent : Colors.greenAccent, 64,
+                        () async {
+                          await StreamingService.muteMic(!_micMuted);
+                          setState(() => _micMuted = !_micMuted);
+                        }),
+                      const SizedBox(height: 8),
+                      _btn(Icons.flip_camera_android, 'SWITCH',
+                        Colors.purpleAccent, 64, () => StreamingService.switchCamera()),
                     ]))),
                 ]),
               );
             }
+
             Widget _btn(IconData icon, String label, Color color, double size, VoidCallback onTap) {
               return InkWell(onTap: onTap, borderRadius: BorderRadius.circular(8),
                 child: Container(width: size, height: size,
@@ -456,6 +640,7 @@ jobs:
           }
           D
 
+          # --- graphics_editor.dart (unchanged) ---
           cat > lib/screens/graphics_editor.dart << 'D'
           import 'package:flutter/material.dart';
           import 'package:uuid/uuid.dart';
@@ -632,6 +817,7 @@ jobs:
           }
           D
 
+          # --- accounts_screen.dart (unchanged) ---
           cat > lib/screens/accounts_screen.dart << 'D'
           import 'package:flutter/material.dart';
           import 'package:uuid/uuid.dart';
@@ -775,12 +961,15 @@ jobs:
           }
           D
 
+          # --- director_screen.dart (updated with WebRTC + Live Camera panel) ---
           cat > lib/screens/director_screen.dart << 'D'
           import 'dart:async';
           import 'package:flutter/material.dart';
+          import 'package:flutter_webrtc/flutter_webrtc.dart';
           import '../models/overlay_item.dart';
           import '../services/overlay_store.dart';
           import '../widgets/overlay_renderer.dart';
+          import '../widgets/live_camera.dart';
           import 'graphics_editor.dart';
           import 'accounts_screen.dart';
 
@@ -800,6 +989,7 @@ jobs:
           class _DirectorScreenState extends State<DirectorScreen> {
             bool _onAir = false;
             bool _menuOpen = false;
+            bool _showLiveCamera = false;
             int _tab = 0;
             int _sec = 0;
             int _camCount = 6;
@@ -809,19 +999,92 @@ jobs:
             final _overlayStore = OverlayStore();
             List<OverlayItem> _overlays = [];
 
+            // WebRTC
+            final _localRenderer = RTCVideoRenderer();
+            final _remoteRenderer = RTCVideoRenderer();
+            RTCPeerConnection? _pc;
+            MediaStream? _localStream;
+            MediaStream? _remoteStream;
+            bool _webrtcReady = false;
+
             @override
             void initState() {
               super.initState();
               _ticker = Timer.periodic(const Duration(seconds: 1),
                 (_) { if (mounted) setState(() => _sec++); });
               _loadOverlays();
+              _initWebRTC();
             }
+
+            Future<void> _initWebRTC() async {
+              await _localRenderer.initialize();
+              await _remoteRenderer.initialize();
+              try {
+                final constraints = {
+                  'audio': true,
+                  'video': {
+                    'mandatory': {
+                      'minWidth': '640', 'minHeight': '480',
+                      'maxWidth': '1280', 'maxHeight': '720',
+                    },
+                    'facingMode': 'user',
+                  },
+                };
+                _localStream = await navigator.mediaDevices.getUserMedia(constraints);
+                _localRenderer.srcObject = _localStream;
+                if (mounted) setState(() => _webrtcReady = true);
+              } catch (e) {
+                debugPrint('WebRTC init error: $e');
+              }
+            }
+
+            Future<void> _createPeerConnection() async {
+              final config = {
+                'iceServers': [
+                  {'urls': 'stun:stun.l.google.com:19302'},
+                  {'urls': 'stun:stun1.l.google.com:19302'},
+                ],
+              };
+              _pc = await createPeerConnection(config);
+              _pc!.onIceCandidate = (candidate) {
+                debugPrint('ICE candidate: ${candidate.toMap()}');
+              };
+              _pc!.onTrack = (event) {
+                if (event.streams.isNotEmpty) {
+                  _remoteStream = event.streams[0];
+                  _remoteRenderer.srcObject = _remoteStream;
+                  if (mounted) setState(() {});
+                }
+              };
+              if (_localStream != null) {
+                for (final track in _localStream!.getTracks()) {
+                  await _pc!.addTrack(track, _localStream!);
+                }
+              }
+            }
+
+            Future<void> _callPeer() async {
+              await _createPeerConnection();
+              final offer = await _pc!.createOffer();
+              await _pc!.setLocalDescription(offer);
+              debugPrint('Offer: ${offer.sdp}');
+              // In production, send offer via signaling server
+            }
+
+            @override
+            void dispose() {
+              _ticker?.cancel();
+              _localRenderer.dispose();
+              _remoteRenderer.dispose();
+              _pc?.close();
+              _localStream?.dispose();
+              super.dispose();
+            }
+
             Future<void> _loadOverlays() async {
               final items = await _overlayStore.loadAll();
               if (mounted) setState(() => _overlays = items);
             }
-            @override
-            void dispose() { _ticker?.cancel(); super.dispose(); }
 
             String get _time {
               final h = (_sec ~/ 3600).toString().padLeft(2, '0');
@@ -905,7 +1168,18 @@ jobs:
             Widget build(BuildContext context) {
               return Scaffold(backgroundColor: _bg, body: SafeArea(child: Stack(children: [
                 Column(children: [
-                  _top(), _strip(), _tabs(),
+                  _top(),
+                  if (_showLiveCamera)
+                    Expanded(child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        margin: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(border: Border.all(color: _yellow, width: 1.5)),
+                        child: const LiveCamera(front: false),
+                      ),
+                    )),
+                  if (!_showLiveCamera) _strip(),
+                  _tabs(),
                   Expanded(child: _tab == 1 ? _grid() : _prog()),
                   _bar(),
                 ]),
@@ -930,6 +1204,15 @@ jobs:
                     child: Text('$_camCount CAMS', style: const TextStyle(
                       color: _blue, fontSize: 8,
                       fontWeight: FontWeight.w900, letterSpacing: 1))),
+                  if (_webrtcReady) ...[
+                    const SizedBox(width: 6),
+                    Container(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(color: Colors.green.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(3)),
+                      child: const Text('WEBRTC', style: TextStyle(
+                        color: Colors.greenAccent, fontSize: 8,
+                        fontWeight: FontWeight.w900, letterSpacing: 1))),
+                  ],
                   const Spacer(),
                   Text(_time, style: const TextStyle(color: Colors.white,
                     fontSize: 10, fontWeight: FontWeight.w700)),
@@ -1087,6 +1370,22 @@ jobs:
                           color: Colors.white, fontSize: 11,
                           fontWeight: FontWeight.w900, letterSpacing: 1.2)),
                       ]))),
+                  const SizedBox(width: 8),
+                  GestureDetector(onTap: () => setState(() => _showLiveCamera = !_showLiveCamera),
+                    child: Container(height: 36,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      decoration: BoxDecoration(
+                        color: _showLiveCamera ? _blue.withOpacity(0.3) : Colors.white10,
+                        borderRadius: BorderRadius.circular(5),
+                        border: Border.all(color: _showLiveCamera ? _blue : Colors.white24)),
+                      child: Row(children: [
+                        Icon(_showLiveCamera ? Icons.videocam : Icons.videocam_off,
+                          color: _showLiveCamera ? _blue : Colors.white54, size: 14),
+                        const SizedBox(width: 4),
+                        Text('LIVE CAM', style: TextStyle(
+                          color: _showLiveCamera ? _blue : Colors.white54,
+                          fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1)),
+                      ]))),
                   const Spacer(),
                   GestureDetector(onTap: _take,
                     child: Container(height: 36,
@@ -1123,6 +1422,9 @@ jobs:
                   }),
                   _mi(Icons.layers, 'Graphics', _openG, teal: true),
                   _mi(Icons.link, 'Link Accounts', _openA),
+                  _mi(Icons.phone_in_talk, 'Call Camera (WebRTC)', () {
+                    setState(() => _menuOpen = false); _callPeer();
+                  }),
                 ])));
             }
             Widget _mi(IconData icon, String label, VoidCallback onTap, {bool teal = false}) {
@@ -1142,6 +1444,16 @@ jobs:
       # 4) Modern Android Gradle configuration
       - name: Configure Android
         run: |
+          # Fix the Gradle version issue
+          mkdir -p android/gradle/wrapper
+          cat > android/gradle/wrapper/gradle-wrapper.properties << 'E'
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip
+          E
+
           cat > android/settings.gradle << 'E'
           pluginManagement {
               def flutterSdkPath = {
@@ -1164,7 +1476,11 @@ jobs:
 
           cat > android/build.gradle << 'E'
           allprojects {
-              repositories { google(); mavenCentral() }
+              repositories {
+                  google()
+                  mavenCentral()
+                  maven { url 'https://jitpack.io' }
+              }
           }
           rootProject.buildDir = "../build"
           subprojects { project.buildDir = "${rootProject.buildDir}/${project.name}" }
@@ -1219,9 +1535,18 @@ jobs:
               <uses-permission android:name="android.permission.RECORD_AUDIO" />
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+              <uses-permission android:name="android.permission.BLUETOOTH" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
               <uses-feature android:name="android.hardware.camera" android:required="true" />
               <uses-feature android:name="android.hardware.microphone" android:required="true" />
-              <application android:label="Mobile TV Studio"
+              <application android:label="abrimax"
                            android:name="${applicationName}"
                            android:icon="@mipmap/ic_launcher"
                            android:usesCleartextTraffic="true"
@@ -1264,5 +1589,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: MobileTVStudio-android
+          name: abrimax-android
           path: build/app/outputs/flutter-apk/app-release.apk
