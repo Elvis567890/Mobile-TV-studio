@@ -1,150 +1,211 @@
 import 'package:flutter/material.dart';
+import 'package:rtmp_broadcaster/camera.dart';
+import '../services/streaming_service.dart';
+import '../services/account_store.dart';
 
-import '../ui/widgets/big_button.dart';
-import '../ui/widgets/status_badge.dart';
-
-/// The camera node UI. This phone sends video.
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
-
   @override
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
 class _CameraScreenState extends State<CameraScreen> {
   bool _live = false;
-  LinkState _link = LinkState.offline;
+  bool _recording = false;
+  bool _micMuted = false;
+  bool _front = false;
   String _quality = '720p';
-  bool _frontCamera = false;
+  int _fps = 30;
+  String _status = 'READY';
+  List<String> _usbMics = [];
+  CameraController? _cam;
 
-  void _toggleLive() {
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    _cam = await StreamingService.initialize(front: _front);
+    final mics = await StreamingService.detectUsbMics();
+    if (mounted) setState(() => _usbMics = mics);
+  }
+
+  void _cycleQ() {
     setState(() {
-      _live = !_live;
-      _link = _live ? LinkState.connecting : LinkState.offline;
+      if (_quality == '720p') _quality = '480p';
+      else if (_quality == '480p') _quality = '360p';
+      else _quality = '720p';
     });
+  }
 
+  void _cycleF() {
+    setState(() {
+      final o = [24, 25, 30, 35, 60];
+      _fps = o[(o.indexOf(_fps) + 1) % o.length];
+    });
+  }
+
+  Future<void> _toggleLive() async {
     if (_live) {
-      // Placeholder — will be replaced by real transport connection.
-      Future.delayed(const Duration(seconds: 2), () {
-        if (!mounted) return;
-        setState(() => _link = LinkState.wifi);
-      });
+      await StreamingService.stopStream();
+      if (mounted) setState(() { _live = false; _status = 'STOPPED'; });
+      return;
+    }
+    final store = AccountStore();
+    final accounts = await store.loadAll();
+    if (accounts.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(
+            'Link an account first (Director > Menu > Link Accounts)')));
+      }
+      return;
+    }
+    final acct = accounts.first;
+    if (mounted) setState(() => _status = 'CONNECTING...');
+    try {
+      await StreamingService.startStream(
+        rtmpUrl: acct.rtmpUrl,
+        streamKey: acct.streamKey,
+      );
+      if (mounted) setState(() { _live = true; _status = 'LIVE'; });
+    } catch (e) {
+      if (mounted) setState(() => _status = 'ERROR');
     }
   }
 
-  void _cycleQuality() {
-    setState(() {
-      switch (_quality) {
-        case '720p':
-          _quality = '480p';
-          break;
-        case '480p':
-          _quality = '360p';
-          break;
-        default:
-          _quality = '720p';
-      }
-    });
+  Future<void> _toggleRecord() async {
+    if (_recording) {
+      await StreamingService.stopRecording();
+      if (mounted) setState(() {
+        _recording = false; _status = 'RECORDING SAVED';
+      });
+      return;
+    }
+    await StreamingService.startRecording();
+    if (mounted) setState(() { _recording = true; _status = 'RECORDING'; });
+  }
+
+  @override
+  void dispose() {
+    StreamingService.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final linkLabel = _link == LinkState.offline
-        ? 'OFFLINE'
-        : '$_quality • ${_link.name.toUpperCase()}';
-
     return Scaffold(
+      backgroundColor: const Color(0xFF0A0A0F),
       appBar: AppBar(
-        title: const Text('CAMERA NODE'),
+        title: const Text('CAMERA NODE', style: TextStyle(
+          fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)),
+        backgroundColor: const Color(0xFF141418),
         actions: [
           Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: Center(
-              child: StatusBadge(state: _link, label: linkLabel),
-            ),
+            padding: const EdgeInsets.only(right: 12),
+            child: Center(child: Text(
+              _status,
+              style: TextStyle(
+                color: _live ? Colors.green
+                    : (_recording ? Colors.orange : Colors.grey),
+                fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1,
+              ),
+            )),
           ),
         ],
       ),
-      body: Row(
-        children: [
-          // ---- Preview area ----
-          Expanded(
-            child: Container(
-              margin: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.black,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: _live ? Colors.redAccent : Colors.white12,
-                  width: _live ? 3 : 1,
-                ),
-              ),
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      _live ? Icons.videocam : Icons.videocam_off,
-                      size: 72,
-                      color: _live ? Colors.redAccent : Colors.white24,
-                    ),
-                    const SizedBox(height: 14),
-                    Text(
-                      _live ? 'PREVIEW LIVE' : 'CAMERA IDLE',
-                      style: TextStyle(
-                        color: _live ? Colors.redAccent : Colors.white38,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 4,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'Live camera feed appears here.',
-                      style: TextStyle(color: Colors.white24, fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+      body: Row(children: [
+        Expanded(child: Container(
+          margin: const EdgeInsets.all(10),
+          decoration: BoxDecoration(color: Colors.black,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: _live ? Colors.red : Colors.white24,
+              width: _live ? 3 : 1)),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: _cam != null && _cam!.value.isInitialized
+                ? CameraPreview(_cam!)
+                : const Center(child: CircularProgressIndicator(
+                    color: Colors.redAccent)),
           ),
-
-          // ---- Control column ----
-          Container(
-            width: 200,
-            color: const Color(0xFF14141A),
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                BigButton(
-                  icon: _live ? Icons.stop : Icons.play_arrow,
-                  label: _live ? 'STOP' : 'GO LIVE',
-                  color: _live ? Colors.redAccent : Colors.greenAccent,
-                  active: _live,
-                  onTap: _toggleLive,
+        )),
+        Container(width: 160, color: const Color(0xFF141418),
+          padding: const EdgeInsets.all(8),
+          child: SingleChildScrollView(child: Column(children: [
+            if (_usbMics.isNotEmpty)
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.teal.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: Colors.tealAccent.withOpacity(0.4)),
                 ),
-                BigButton(
-                  icon: Icons.high_quality,
-                  label: _quality,
-                  color: Colors.blueAccent,
-                  active: true,
-                  size: 90,
-                  onTap: _cycleQuality,
-                ),
-                BigButton(
-                  icon: Icons.flip_camera_android,
-                  label: _frontCamera ? 'FRONT' : 'REAR',
-                  color: Colors.purpleAccent,
-                  active: true,
-                  size: 90,
-                  onTap: () => setState(() => _frontCamera = !_frontCamera),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+                child: Row(children: [
+                  const Icon(Icons.usb, color: Colors.tealAccent, size: 14),
+                  const SizedBox(width: 4),
+                  Expanded(child: Text(
+                    _usbMics.first,
+                    style: const TextStyle(
+                      color: Colors.tealAccent, fontSize: 8),
+                    overflow: TextOverflow.ellipsis,
+                  )),
+                ]),
+              ),
+            _btn(_live ? Icons.stop : Icons.play_arrow,
+              _live ? 'STOP' : 'GO LIVE',
+              _live ? Colors.red : Colors.green, 78, _toggleLive),
+            const SizedBox(height: 8),
+            _btn(_recording ? Icons.stop : Icons.fiber_manual_record,
+              _recording ? 'STOP REC' : 'RECORD',
+              _recording ? Colors.red : Colors.orangeAccent, 64,
+              _toggleRecord),
+            const SizedBox(height: 8),
+            _btn(Icons.high_quality, _quality, Colors.blue, 64, _cycleQ),
+            const SizedBox(height: 8),
+            _btn(Icons.speed, '$_fps FPS', Colors.tealAccent, 64, _cycleF),
+            const SizedBox(height: 8),
+            _btn(_micMuted ? Icons.mic_off : Icons.mic,
+              _micMuted ? 'MUTED' : 'MIC ON',
+              _micMuted ? Colors.redAccent : Colors.greenAccent, 64,
+              () async {
+                await StreamingService.muteMic(!_micMuted);
+                _cam = StreamingService.controller;
+                if (mounted) setState(() => _micMuted = !_micMuted);
+              }),
+            const SizedBox(height: 8),
+            _btn(Icons.flip_camera_android, 'SWITCH',
+              Colors.purpleAccent, 64, () async {
+                await StreamingService.switchCamera();
+                _cam = StreamingService.controller;
+                if (mounted) setState(() => _front = !_front);
+              }),
+          ]))),
+      ]),
     );
+  }
+
+  Widget _btn(IconData icon, String label, Color color,
+      double size, VoidCallback onTap) {
+    return InkWell(onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(width: size, height: size,
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.12),
+          border: Border.all(color: color, width: 1.5),
+          borderRadius: BorderRadius.circular(8)),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: color, size: size * 0.32),
+            const SizedBox(height: 4),
+            Text(label, textAlign: TextAlign.center,
+              style: TextStyle(color: color, fontSize: 9,
+                fontWeight: FontWeight.w900, letterSpacing: 1)),
+          ])));
   }
 }
