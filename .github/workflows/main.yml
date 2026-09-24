@@ -12,13 +12,17 @@ jobs:
       - uses: subosito/flutter-action@v2
         with: {flutter-version: '3.29.0', channel: stable, cache: true}
 
+      # ─────────────────────────────────────────────────────────────
       # 1) Generate project scaffolding FIRST
+      # ─────────────────────────────────────────────────────────────
       - name: Flutter create
         run: |
           rm -rf lib test android build .dart_tool pubspec.lock pubspec.yaml
           flutter create --platforms=android --org com.yourcompany --project-name mobile_tv_studio .
 
-      # 2) Overwrite pubspec + generate icon
+      # ─────────────────────────────────────────────────────────────
+      # 2) Overwrite pubspec + generate launcher icon
+      # ─────────────────────────────────────────────────────────────
       - name: Setup pubspec and icon
         run: |
           mkdir -p lib/screens lib/widgets lib/models lib/services assets/icon
@@ -53,7 +57,7 @@ jobs:
             shared_preferences: ^2.3.2
             uuid: ^4.5.0
             flutter_webrtc: ^0.12.5
-            rtmp_broadcaster: ^3.1.0
+            rtmp_broadcaster: ^2.3.4
             mic_info: ^0.0.5
             permission_handler: ^11.3.1
             wakelock_plus: ^1.2.8
@@ -85,10 +89,12 @@ jobs:
             package_info_plus: ^8.0.0
           P
 
+      # ─────────────────────────────────────────────────────────────
       # 3) Write all Dart sources
+      # ─────────────────────────────────────────────────────────────
       - name: Write Dart files
         run: |
-          # --- main.dart ---
+          # ─── lib/main.dart ───
           cat > lib/main.dart << 'D'
           import 'package:flutter/material.dart';
           import 'package:flutter/services.dart';
@@ -127,7 +133,7 @@ jobs:
           }
           D
 
-          # --- models ---
+          # ─── lib/models/overlay_item.dart ───
           cat > lib/models/overlay_item.dart << 'D'
           enum OverlayKind { text, liveBadge }
           class OverlayItem {
@@ -162,6 +168,7 @@ jobs:
           }
           D
 
+          # ─── lib/models/account_item.dart ───
           cat > lib/models/account_item.dart << 'D'
           class AccountItem {
             final String id;
@@ -184,7 +191,7 @@ jobs:
           }
           D
 
-          # --- services ---
+          # ─── lib/services/overlay_store.dart ───
           cat > lib/services/overlay_store.dart << 'D'
           import 'dart:convert';
           import 'package:shared_preferences/shared_preferences.dart';
@@ -208,6 +215,7 @@ jobs:
           }
           D
 
+          # ─── lib/services/account_store.dart ───
           cat > lib/services/account_store.dart << 'D'
           import 'dart:convert';
           import 'package:shared_preferences/shared_preferences.dart';
@@ -231,25 +239,45 @@ jobs:
           }
           D
 
+          # ─── lib/services/streaming_service.dart ───
           cat > lib/services/streaming_service.dart << 'D'
-          import 'dart:async';
-          import 'package:flutter/foundation.dart';
+          import 'package:camera/camera.dart';
           import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
           import 'package:mic_info/mic_info.dart';
 
           class StreamingService {
-            static final _plugin = RtmpBroadcaster();
-            static StreamSubscription? _eventSub;
+            static CameraController? _controller;
+            static bool _isStreaming = false;
+            static bool _isRecording = false;
 
-            static Future<void> initialize() async {
-              await _plugin.initialize();
+            static CameraController? get controller => _controller;
+            static bool get isStreaming => _isStreaming;
+            static bool get isRecording => _isRecording;
+
+            static Future<CameraController?> initialize({bool front = false}) async {
+              final cams = await availableCameras();
+              if (cams.isEmpty) return null;
+              final lens = front
+                  ? CameraLensDirection.front
+                  : CameraLensDirection.back;
+              final cam = cams.firstWhere(
+                (c) => c.lensDirection == lens,
+                orElse: () => cams.first,
+              );
+              _controller = CameraController(
+                cam,
+                ResolutionPreset.high,
+                enableAudio: true,
+              );
+              await _controller!.initialize();
+              return _controller;
             }
 
             static Future<List<String>> detectUsbMics() async {
               try {
                 final mics = await MicInfo.getWiredMicrophones();
                 return mics.map((m) => m.productName).toList();
-              } catch (e) {
+              } catch (_) {
                 return [];
               }
             }
@@ -257,49 +285,68 @@ jobs:
             static Future<void> startStream({
               required String rtmpUrl,
               required String streamKey,
-              int width = 1280,
-              int height = 720,
-              int fps = 30,
-              int bitrate = 2500000,
+              int bitrate = 2500 * 1024,
             }) async {
+              if (_controller == null) return;
               final url = '$rtmpUrl/$streamKey';
-              await _plugin.startStreaming(
-                url,
-                width: width,
-                height: height,
-                fps: fps,
-                bitrate: bitrate,
-              );
+              await _controller!.startVideoStreaming(url, bitrate: bitrate);
+              _isStreaming = true;
             }
 
             static Future<void> stopStream() async {
-              await _plugin.stopStreaming();
+              if (_controller == null) return;
+              await _controller!.stopEverything();
+              _isStreaming = false;
             }
 
-            static Future<void> startRecording(String path) async {
-              await _plugin.startRecording(path);
+            static Future<void> startRecording() async {
+              if (_controller == null) return;
+              await _controller!.startVideoRecording();
+              _isRecording = true;
             }
 
             static Future<void> stopRecording() async {
-              await _plugin.stopRecording();
+              if (_controller == null) return;
+              await _controller!.stopVideoRecording();
+              _isRecording = false;
             }
 
             static Future<void> switchCamera() async {
-              await _plugin.switchCamera();
+              final cams = await availableCameras();
+              if (cams.isEmpty) return;
+              final current = _controller?.description.lensDirection
+                  ?? CameraLensDirection.back;
+              final target = current == CameraLensDirection.back
+                  ? CameraLensDirection.front
+                  : CameraLensDirection.back;
+              final cam = cams.firstWhere(
+                (c) => c.lensDirection == target,
+                orElse: () => cams.first,
+              );
+              await _controller?.dispose();
+              _controller = CameraController(
+                cam,
+                ResolutionPreset.high,
+                enableAudio: true,
+              );
+              await _controller!.initialize();
             }
 
             static Future<void> muteMic(bool muted) async {
-              await _plugin.muteMic(muted);
+              if (_controller == null) return;
+              await _controller!.setMicrophoneMute(muted);
             }
 
             static Future<void> dispose() async {
-              await _eventSub?.cancel();
-              await _plugin.dispose();
+              await _controller?.dispose();
+              _controller = null;
+              _isStreaming = false;
+              _isRecording = false;
             }
           }
           D
 
-          # --- widgets ---
+          # ─── lib/widgets/overlay_renderer.dart ───
           cat > lib/widgets/overlay_renderer.dart << 'D'
           import 'package:flutter/material.dart';
           import '../models/overlay_item.dart';
@@ -330,7 +377,8 @@ jobs:
                   ),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     Container(width: 8, height: 8,
-                      decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle)),
+                      decoration: const BoxDecoration(
+                        color: Colors.white, shape: BoxShape.circle)),
                     const SizedBox(width: 6),
                     Text(o.content, style: TextStyle(
                       color: Colors.white, fontSize: o.size,
@@ -346,6 +394,7 @@ jobs:
           }
           D
 
+          # ─── lib/widgets/live_camera.dart ───
           cat > lib/widgets/live_camera.dart << 'D'
           import 'package:camera/camera.dart';
           import 'package:flutter/material.dart';
@@ -369,7 +418,8 @@ jobs:
                     ? CameraLensDirection.front : CameraLensDirection.back;
                 final cam = cams.firstWhere((c) => c.lensDirection == lens,
                     orElse: () => cams.first);
-                _ctrl = CameraController(cam, ResolutionPreset.high, enableAudio: true);
+                _ctrl = CameraController(cam, ResolutionPreset.high,
+                    enableAudio: true);
                 await _ctrl!.initialize();
                 if (mounted) setState(() => _ready = true);
               } catch (e) {
@@ -388,21 +438,23 @@ jobs:
             @override
             Widget build(BuildContext context) {
               if (_error != null) {
-                return Container(color: Colors.black, child: Center(child: Text(_error!,
+                return Container(color: Colors.black, child: Center(child: Text(
+                  _error!,
                   style: const TextStyle(color: Colors.redAccent, fontSize: 11))));
               }
               if (!_ready || _ctrl == null) {
                 return Container(color: Colors.black, child: const Center(
                   child: CircularProgressIndicator(color: Colors.redAccent)));
               }
-              final isFront = _ctrl!.description.lensDirection == CameraLensDirection.front;
+              final isFront =
+                  _ctrl!.description.lensDirection == CameraLensDirection.front;
               return RotatedBox(quarterTurns: isFront ? 3 : 1,
                   child: CameraPreview(_ctrl!));
             }
           }
           D
 
-          # --- screens ---
+          # ─── lib/screens/role_chooser.dart ───
           cat > lib/screens/role_chooser.dart << 'D'
           import 'package:flutter/material.dart';
           import 'director_screen.dart';
@@ -414,25 +466,30 @@ jobs:
               return Scaffold(
                 backgroundColor: const Color(0xFF0A0A0F),
                 body: SafeArea(child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24, vertical: 16),
                   child: Column(children: [
                     const SizedBox(height: 20),
                     const Text('ABRIMAX STUDIO', style: TextStyle(
-                      fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: 4)),
+                      fontSize: 24, fontWeight: FontWeight.w900,
+                      letterSpacing: 4)),
                     const SizedBox(height: 4),
                     const Text('What is this phone?',
                       style: TextStyle(fontSize: 12, color: Colors.white54)),
                     const SizedBox(height: 20),
                     Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      _card(context, Icons.videocam, 'CAMERA', const Color(0xFFEF4444),
+                      _card(context, Icons.videocam, 'CAMERA',
+                        const Color(0xFFEF4444),
                         () => Navigator.push(context, MaterialPageRoute(
                           builder: (_) => const CameraScreen()))),
                       const SizedBox(width: 16),
-                      _card(context, Icons.dashboard, 'DIRECTOR', const Color(0xFF3B82F6),
+                      _card(context, Icons.dashboard, 'DIRECTOR',
+                        const Color(0xFF3B82F6),
                         () => Navigator.push(context, MaterialPageRoute(
                           builder: (_) => const DirectorScreen()))),
                       const SizedBox(width: 16),
-                      _card(context, Icons.all_inclusive, 'BOTH', const Color(0xFF8B5CF6),
+                      _card(context, Icons.all_inclusive, 'BOTH',
+                        const Color(0xFF8B5CF6),
                         () => Navigator.push(context, MaterialPageRoute(
                           builder: (_) => const DirectorScreen()))),
                     ]),
@@ -442,25 +499,30 @@ jobs:
             }
             Widget _card(BuildContext context, IconData icon, String title,
                 Color color, VoidCallback onTap) {
-              return InkWell(onTap: onTap, borderRadius: BorderRadius.circular(12),
+              return InkWell(onTap: onTap,
+                borderRadius: BorderRadius.circular(12),
                 child: Container(width: 140, height: 150,
                   decoration: BoxDecoration(color: Colors.white10,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: color.withOpacity(0.5), width: 2)),
-                  child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Icon(icon, size: 44, color: color),
-                    const SizedBox(height: 10),
-                    Text(title, style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 2)),
-                  ])));
+                    border: Border.all(
+                      color: color.withOpacity(0.5), width: 2)),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(icon, size: 44, color: color),
+                      const SizedBox(height: 10),
+                      Text(title, style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w900,
+                        letterSpacing: 2)),
+                    ])));
             }
           }
           D
 
-          # --- camera_screen.dart ---
+          # ─── lib/screens/camera_screen.dart ───
           cat > lib/screens/camera_screen.dart << 'D'
+          import 'package:camera/camera.dart';
           import 'package:flutter/material.dart';
-          import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
           import '../services/streaming_service.dart';
           import '../services/account_store.dart';
 
@@ -474,10 +536,12 @@ jobs:
             bool _live = false;
             bool _recording = false;
             bool _micMuted = false;
+            bool _front = false;
             String _quality = '720p';
             int _fps = 30;
             String _status = 'READY';
             List<String> _usbMics = [];
+            CameraController? _cam;
 
             @override
             void initState() {
@@ -486,7 +550,7 @@ jobs:
             }
 
             Future<void> _init() async {
-              await StreamingService.initialize();
+              _cam = await StreamingService.initialize(front: _front);
               final mics = await StreamingService.detectUsbMics();
               if (mounted) setState(() => _usbMics = mics);
             }
@@ -509,40 +573,54 @@ jobs:
             Future<void> _toggleLive() async {
               if (_live) {
                 await StreamingService.stopStream();
-                setState(() { _live = false; _status = 'STOPPED'; });
-              } else {
-                final store = AccountStore();
-                final accounts = await store.loadAll();
-                if (accounts.isEmpty) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Link an account first (Director > Menu > Link Accounts)')));
-                  }
-                  return;
+                if (mounted) setState(() {
+                  _live = false; _status = 'STOPPED';
+                });
+                return;
+              }
+              final store = AccountStore();
+              final accounts = await store.loadAll();
+              if (accounts.isEmpty) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text(
+                      'Link an account first (Director > Menu > Link Accounts)')));
                 }
-                final acct = accounts.first;
-                setState(() => _status = 'CONNECTING...');
-                try {
-                  await StreamingService.startStream(
-                    rtmpUrl: acct.rtmpUrl,
-                    streamKey: acct.streamKey,
-                  );
-                  setState(() { _live = true; _status = 'LIVE'; });
-                } catch (e) {
-                  setState(() => _status = 'ERROR: $e');
-                }
+                return;
+              }
+              final acct = accounts.first;
+              if (mounted) setState(() => _status = 'CONNECTING...');
+              try {
+                await StreamingService.startStream(
+                  rtmpUrl: acct.rtmpUrl,
+                  streamKey: acct.streamKey,
+                );
+                if (mounted) setState(() {
+                  _live = true; _status = 'LIVE';
+                });
+              } catch (e) {
+                if (mounted) setState(() => _status = 'ERROR');
               }
             }
 
             Future<void> _toggleRecord() async {
               if (_recording) {
                 await StreamingService.stopRecording();
-                setState(() { _recording = false; _status = 'RECORDING SAVED'; });
-              } else {
-                final path = '/storage/emulated/0/Movies/abrimax_${DateTime.now().millisecondsSinceEpoch}.mp4';
-                await StreamingService.startRecording(path);
-                setState(() { _recording = true; _status = 'RECORDING'; });
+                if (mounted) setState(() {
+                  _recording = false; _status = 'RECORDING SAVED';
+                });
+                return;
               }
+              await StreamingService.startRecording();
+              if (mounted) setState(() {
+                _recording = true; _status = 'RECORDING';
+              });
+            }
+
+            @override
+            void dispose() {
+              StreamingService.dispose();
+              super.dispose();
             }
 
             @override
@@ -551,7 +629,8 @@ jobs:
                 backgroundColor: const Color(0xFF0A0A0F),
                 appBar: AppBar(
                   title: const Text('CAMERA NODE', style: TextStyle(
-                    fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)),
+                    fontSize: 14, letterSpacing: 3,
+                    fontWeight: FontWeight.w900)),
                   backgroundColor: const Color(0xFF141418),
                   actions: [
                     Padding(
@@ -559,8 +638,10 @@ jobs:
                       child: Center(child: Text(
                         _status,
                         style: TextStyle(
-                          color: _live ? Colors.green : (_recording ? Colors.orange : Colors.grey),
-                          fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1,
+                          color: _live ? Colors.green
+                              : (_recording ? Colors.orange : Colors.grey),
+                          fontSize: 10, fontWeight: FontWeight.w800,
+                          letterSpacing: 1,
                         ),
                       )),
                     ),
@@ -571,10 +652,16 @@ jobs:
                     margin: const EdgeInsets.all(10),
                     decoration: BoxDecoration(color: Colors.black,
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: _live ? Colors.red : Colors.white24,
+                      border: Border.all(
+                        color: _live ? Colors.red : Colors.white24,
                         width: _live ? 3 : 1)),
-                    child: const ClipRRect(borderRadius: BorderRadius.all(Radius.circular(6)),
-                      child: RtmpCameraPreview()),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: _cam != null && _cam!.value.isInitialized
+                          ? CameraPreview(_cam!)
+                          : const Center(child: CircularProgressIndicator(
+                              color: Colors.redAccent)),
+                    ),
                   )),
                   Container(width: 160, color: const Color(0xFF141418),
                     padding: const EdgeInsets.all(8),
@@ -586,61 +673,78 @@ jobs:
                           decoration: BoxDecoration(
                             color: Colors.teal.withOpacity(0.15),
                             borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: Colors.tealAccent.withOpacity(0.4)),
+                            border: Border.all(
+                              color: Colors.tealAccent.withOpacity(0.4)),
                           ),
                           child: Row(children: [
-                            const Icon(Icons.usb, color: Colors.tealAccent, size: 14),
+                            const Icon(Icons.usb,
+                              color: Colors.tealAccent, size: 14),
                             const SizedBox(width: 4),
                             Expanded(child: Text(
                               _usbMics.first,
-                              style: const TextStyle(color: Colors.tealAccent, fontSize: 8),
+                              style: const TextStyle(
+                                color: Colors.tealAccent, fontSize: 8),
                               overflow: TextOverflow.ellipsis,
                             )),
                           ]),
                         ),
-                      _btn(_live ? Icons.stop : Icons.play_arrow, _live ? 'STOP' : 'GO LIVE',
+                      _btn(_live ? Icons.stop : Icons.play_arrow,
+                        _live ? 'STOP' : 'GO LIVE',
                         _live ? Colors.red : Colors.green, 78, _toggleLive),
                       const SizedBox(height: 8),
                       _btn(_recording ? Icons.stop : Icons.fiber_manual_record,
                         _recording ? 'STOP REC' : 'RECORD',
-                        _recording ? Colors.red : Colors.orangeAccent, 64, _toggleRecord),
+                        _recording ? Colors.red : Colors.orangeAccent, 64,
+                        _toggleRecord),
                       const SizedBox(height: 8),
-                      _btn(Icons.high_quality, _quality, Colors.blue, 64, _cycleQ),
+                      _btn(Icons.high_quality, _quality, Colors.blue, 64,
+                        _cycleQ),
                       const SizedBox(height: 8),
-                      _btn(Icons.speed, '$_fps FPS', Colors.tealAccent, 64, _cycleF),
+                      _btn(Icons.speed, '$_fps FPS', Colors.tealAccent, 64,
+                        _cycleF),
                       const SizedBox(height: 8),
                       _btn(_micMuted ? Icons.mic_off : Icons.mic,
                         _micMuted ? 'MUTED' : 'MIC ON',
                         _micMuted ? Colors.redAccent : Colors.greenAccent, 64,
                         () async {
                           await StreamingService.muteMic(!_micMuted);
-                          setState(() => _micMuted = !_micMuted);
+                          if (mounted) setState(() => _micMuted = !_micMuted);
                         }),
                       const SizedBox(height: 8),
                       _btn(Icons.flip_camera_android, 'SWITCH',
-                        Colors.purpleAccent, 64, () => StreamingService.switchCamera()),
+                        Colors.purpleAccent, 64, () async {
+                          await StreamingService.switchCamera();
+                          _cam = StreamingService.controller;
+                          if (mounted) setState(() => _front = !_front);
+                        }),
                     ]))),
                 ]),
               );
             }
 
-            Widget _btn(IconData icon, String label, Color color, double size, VoidCallback onTap) {
-              return InkWell(onTap: onTap, borderRadius: BorderRadius.circular(8),
+            Widget _btn(IconData icon, String label, Color color,
+                double size, VoidCallback onTap) {
+              return InkWell(onTap: onTap,
+                borderRadius: BorderRadius.circular(8),
                 child: Container(width: size, height: size,
-                  decoration: BoxDecoration(color: color.withOpacity(0.12),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.12),
                     border: Border.all(color: color, width: 1.5),
                     borderRadius: BorderRadius.circular(8)),
-                  child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Icon(icon, color: color, size: size * 0.32),
-                    const SizedBox(height: 4),
-                    Text(label, textAlign: TextAlign.center, style: TextStyle(
-                      color: color, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1)),
-                  ])));
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(icon, color: color, size: size * 0.32),
+                      const SizedBox(height: 4),
+                      Text(label, textAlign: TextAlign.center,
+                        style: TextStyle(color: color, fontSize: 9,
+                          fontWeight: FontWeight.w900, letterSpacing: 1)),
+                    ])));
             }
           }
           D
 
-          # --- graphics_editor.dart ---
+          # ─── lib/screens/graphics_editor.dart ───
           cat > lib/screens/graphics_editor.dart << 'D'
           import 'package:flutter/material.dart';
           import 'package:uuid/uuid.dart';
@@ -677,7 +781,8 @@ jobs:
             }
             Future<void> _addText() async {
               final ctrl = TextEditingController();
-              final text = await showDialog<String>(context: context, builder: (ctx) {
+              final text = await showDialog<String>(context: context,
+                builder: (ctx) {
                 return AlertDialog(
                   backgroundColor: const Color(0xFF141418),
                   title: const Text('Add Text'),
@@ -692,13 +797,14 @@ jobs:
               });
               if (text == null || text.isEmpty) return;
               setState(() => _items.add(OverlayItem(
-                id: const Uuid().v4(), kind: OverlayKind.text, content: text,
-                x: 0.5, y: 0.5)));
+                id: const Uuid().v4(), kind: OverlayKind.text,
+                content: text, x: 0.5, y: 0.5)));
             }
             void _addLive() {
               setState(() => _items.add(OverlayItem(
                 id: const Uuid().v4(), kind: OverlayKind.liveBadge,
-                content: 'LIVE', x: 0.1, y: 0.15, size: 14, color: 0xFFEF4444)));
+                content: 'LIVE', x: 0.1, y: 0.15,
+                size: 14, color: 0xFFEF4444)));
             }
             void _move(Offset d, Size box) {
               if (_sel == null) return;
@@ -722,7 +828,9 @@ jobs:
                   onTap: () => setState(() => _sel = it.id),
                   child: Container(width: 140, height: 40,
                     decoration: BoxDecoration(border: Border.all(
-                      color: _sel == it.id ? const Color(0xFF3B82F6) : Colors.transparent,
+                      color: _sel == it.id
+                          ? const Color(0xFF3B82F6)
+                          : Colors.transparent,
                       width: 2)))))).toList();
             }
 
@@ -735,10 +843,12 @@ jobs:
                     child: Container(
                       decoration: BoxDecoration(color: Colors.black,
                         borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: const Color(0xFFF5C542), width: 1.5)),
+                        border: Border.all(
+                          color: const Color(0xFFF5C542), width: 1.5)),
                       child: Stack(children: [
-                        const Center(child: Text('DRAG TO MOVE', style: TextStyle(
-                          color: Colors.white24, fontSize: 10, letterSpacing: 3))),
+                        const Center(child: Text('DRAG TO MOVE',
+                          style: TextStyle(color: Colors.white24,
+                            fontSize: 10, letterSpacing: 3))),
                         OverlayRenderer(overlays: _items),
                         ..._buildHandles(box),
                       ])));
@@ -752,8 +862,10 @@ jobs:
                     onTap: () => _setColor(c),
                     child: Container(margin: const EdgeInsets.all(6),
                       width: 32, height: 32,
-                      decoration: BoxDecoration(color: Color(c), shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white24, width: 2))))).toList()));
+                      decoration: BoxDecoration(
+                        color: Color(c), shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white24, width: 2))
+                    ))).toList()));
             }
 
             Widget _list() {
@@ -761,21 +873,27 @@ jobs:
                 return const Center(child: Text('No overlays. Tap + to add.',
                   style: TextStyle(color: Colors.white54, fontSize: 12)));
               }
-              return ListView.builder(itemCount: _items.length, itemBuilder: (_, i) {
+              return ListView.builder(itemCount: _items.length,
+                itemBuilder: (_, i) {
                 final it = _items[i];
                 return ListTile(
                   selected: _sel == it.id,
                   selectedTileColor: Colors.white10,
-                  title: Text(it.content, style: const TextStyle(color: Colors.white)),
+                  title: Text(it.content,
+                    style: const TextStyle(color: Colors.white)),
                   trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                    IconButton(icon: const Icon(Icons.remove_circle_outline, color: Colors.white70),
+                    IconButton(icon: const Icon(
+                      Icons.remove_circle_outline, color: Colors.white70),
                       onPressed: () => setState(() =>
                         it.size = (it.size - 4).clamp(6.0, 200.0))),
-                    IconButton(icon: const Icon(Icons.add_circle_outline, color: Colors.white70),
+                    IconButton(icon: const Icon(
+                      Icons.add_circle_outline, color: Colors.white70),
                       onPressed: () => setState(() =>
                         it.size = (it.size + 4).clamp(6.0, 200.0))),
-                    IconButton(icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                      onPressed: () => setState(() => _items.removeWhere((e) => e.id == it.id))),
+                    IconButton(icon: const Icon(
+                      Icons.delete_outline, color: Colors.redAccent),
+                      onPressed: () => setState(() =>
+                        _items.removeWhere((e) => e.id == it.id))),
                   ]),
                   onTap: () => setState(() => _sel = it.id));
               });
@@ -799,13 +917,14 @@ jobs:
                 backgroundColor: const Color(0xFF0A0A0F),
                 appBar: AppBar(
                   title: const Text('GRAPHICS', style: TextStyle(
-                    fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)),
+                    fontSize: 14, letterSpacing: 3,
+                    fontWeight: FontWeight.w900)),
                   backgroundColor: const Color(0xFF141418),
                   actions: [
-                    IconButton(icon: const Icon(Icons.add, color: Colors.tealAccent),
-                      onPressed: _addText),
-                    IconButton(icon: const Icon(Icons.fiber_manual_record, color: Colors.redAccent),
-                      onPressed: _addLive),
+                    IconButton(icon: const Icon(Icons.add,
+                      color: Colors.tealAccent), onPressed: _addText),
+                    IconButton(icon: const Icon(Icons.fiber_manual_record,
+                      color: Colors.redAccent), onPressed: _addLive),
                   ]),
                 body: Column(children: [
                   Expanded(flex: 3, child: _canvas()),
@@ -817,7 +936,7 @@ jobs:
           }
           D
 
-          # --- accounts_screen.dart ---
+          # ─── lib/screens/accounts_screen.dart ───
           cat > lib/screens/accounts_screen.dart << 'D'
           import 'package:flutter/material.dart';
           import 'package:uuid/uuid.dart';
@@ -835,14 +954,23 @@ jobs:
             List<AccountItem> _items = [];
             bool _loading = true;
             final _platforms = <String, Map<String, String>>{
-              'YouTube':  {'rtmp': 'rtmp://a.rtmp.youtube.com/live2', 'color': 'FF0000'},
-              'Twitch':   {'rtmp': 'rtmp://live.twitch.tv/app', 'color': '9146FF'},
-              'Facebook': {'rtmp': 'rtmps://live-api-s.facebook.com:443/rtmp', 'color': '1877F2'},
-              'TikTok':   {'rtmp': 'rtmp://push.tiktokv.com/live', 'color': '00F2EA'},
-              'Kick':     {'rtmp': 'rtmp://fa723fc1b171.global-contribute.live-video.net/app', 'color': '53FC18'},
-              'Trovo':    {'rtmp': 'rtmp://livepush.trovo.live/live', 'color': '27DB8A'},
-              'LinkedIn': {'rtmp': 'rtmp://rtmp-api.facebook.com:80/rtmp', 'color': '0A66C2'},
-              'X':        {'rtmp': 'rtmp://ingest.pscp.tv:80/x', 'color': '1DA1F2'},
+              'YouTube':  {'rtmp': 'rtmp://a.rtmp.youtube.com/live2',
+                           'color': 'FF0000'},
+              'Twitch':   {'rtmp': 'rtmp://live.twitch.tv/app',
+                           'color': '9146FF'},
+              'Facebook': {'rtmp': 'rtmps://live-api-s.facebook.com:443/rtmp',
+                           'color': '1877F2'},
+              'TikTok':   {'rtmp': 'rtmp://push.tiktokv.com/live',
+                           'color': '00F2EA'},
+              'Kick':     {'rtmp':
+                  'rtmp://fa723fc1b171.global-contribute.live-video.net/app',
+                  'color': '53FC18'},
+              'Trovo':    {'rtmp': 'rtmp://livepush.trovo.live/live',
+                           'color': '27DB8A'},
+              'LinkedIn': {'rtmp': 'rtmp://rtmp-api.facebook.com:80/rtmp',
+                           'color': '0A66C2'},
+              'X':        {'rtmp': 'rtmp://ingest.pscp.tv:80/x',
+                           'color': '1DA1F2'},
             };
 
             @override
@@ -850,7 +978,9 @@ jobs:
 
             Future<void> _load() async {
               final items = await _store.loadAll();
-              if (mounted) setState(() { _items = items; _loading = false; });
+              if (mounted) setState(() {
+                _items = items; _loading = false;
+              });
             }
             IconData _icon(String name) {
               switch (name) {
@@ -872,7 +1002,8 @@ jobs:
             Future<void> _link(String platform) async {
               final keyCtrl = TextEditingController();
               final nameCtrl = TextEditingController(text: platform);
-              final ok = await showDialog<bool>(context: context, builder: (ctx) {
+              final ok = await showDialog<bool>(context: context,
+                builder: (ctx) {
                 return AlertDialog(
                   backgroundColor: const Color(0xFF141418),
                   title: Text('Paste $platform stream key'),
@@ -880,11 +1011,13 @@ jobs:
                     mainAxisSize: MainAxisSize.min, children: [
                       TextField(controller: nameCtrl,
                         style: const TextStyle(color: Colors.white),
-                        decoration: const InputDecoration(labelText: 'Display name')),
+                        decoration: const InputDecoration(
+                          labelText: 'Display name')),
                       const SizedBox(height: 8),
                       TextField(controller: keyCtrl, autofocus: true,
                         style: const TextStyle(color: Colors.white),
-                        decoration: const InputDecoration(labelText: 'Stream Key')),
+                        decoration: const InputDecoration(
+                          labelText: 'Stream Key')),
                     ])),
                   actions: [
                     TextButton(onPressed: () => Navigator.pop(ctx, false),
@@ -897,7 +1030,8 @@ jobs:
               final u = [..._items];
               u.removeWhere((a) => a.platform == platform);
               u.add(AccountItem(id: const Uuid().v4(), platform: platform,
-                name: nameCtrl.text.trim(), streamKey: keyCtrl.text.trim(),
+                name: nameCtrl.text.trim(),
+                streamKey: keyCtrl.text.trim(),
                 rtmpUrl: _platforms[platform]?['rtmp'] ?? ''));
               await _store.saveAll(u);
               if (mounted) setState(() => _items = u);
@@ -911,47 +1045,63 @@ jobs:
             @override
             Widget build(BuildContext context) {
               if (_loading) {
-                return const Scaffold(backgroundColor: Color(0xFF0A0A0F),
+                return const Scaffold(
+                  backgroundColor: Color(0xFF0A0A0F),
                   body: Center(child: CircularProgressIndicator()));
               }
               return Scaffold(
                 backgroundColor: const Color(0xFF0A0A0F),
                 appBar: AppBar(
                   title: const Text('LINK ACCOUNTS', style: TextStyle(
-                    fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)),
+                    fontSize: 14, letterSpacing: 3,
+                    fontWeight: FontWeight.w900)),
                   backgroundColor: const Color(0xFF141418)),
                 body: GridView.count(
                   padding: const EdgeInsets.all(16),
-                  crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12,
-                  childAspectRatio: 1.5,
+                  crossAxisCount: 2, mainAxisSpacing: 12,
+                  crossAxisSpacing: 12, childAspectRatio: 1.5,
                   children: _platforms.keys.map((name) {
-                    final linked = _items.where((a) => a.platform == name).toList();
+                    final linked =
+                        _items.where((a) => a.platform == name).toList();
                     final isLinked = linked.isNotEmpty;
                     final color = _color(name);
                     return InkWell(onTap: () => _link(name),
                       borderRadius: BorderRadius.circular(12),
                       child: Container(
-                        decoration: BoxDecoration(color: color.withOpacity(0.10),
+                        decoration: BoxDecoration(
+                          color: color.withOpacity(0.10),
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: isLinked ? color : Colors.white24, width: 2)),
+                          border: Border.all(
+                            color: isLinked ? color : Colors.white24,
+                            width: 2)),
                         child: Padding(padding: const EdgeInsets.all(12),
-                          child: Column(crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment:
+                                MainAxisAlignment.spaceBetween,
                             children: [
                               Row(children: [
                                 Icon(_icon(name), color: color, size: 28),
                                 const Spacer(),
                                 if (isLinked) GestureDetector(
                                   onTap: () => _unlink(linked.first.id),
-                                  child: const Icon(Icons.close, color: Colors.white54, size: 18)),
+                                  child: const Icon(Icons.close,
+                                    color: Colors.white54, size: 18)),
                               ]),
-                              Column(crossAxisAlignment: CrossAxisAlignment.start,
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(name, style: const TextStyle(color: Colors.white,
-                                    fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 1)),
+                                  Text(name, style: const TextStyle(
+                                    color: Colors.white, fontSize: 14,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 1)),
                                   const SizedBox(height: 2),
-                                  Text(isLinked ? linked.first.name : 'Tap to paste key',
-                                    style: TextStyle(color: isLinked ? color : Colors.white54,
+                                  Text(
+                                    isLinked ? linked.first.name
+                                        : 'Tap to paste key',
+                                    style: TextStyle(
+                                      color: isLinked ? color
+                                          : Colors.white54,
                                       fontSize: 11),
                                     overflow: TextOverflow.ellipsis),
                                 ]),
@@ -961,7 +1111,7 @@ jobs:
           }
           D
 
-          # --- director_screen.dart ---
+          # ─── lib/screens/director_screen.dart ───
           cat > lib/screens/director_screen.dart << 'D'
           import 'dart:async';
           import 'package:flutter/material.dart';
@@ -999,7 +1149,6 @@ jobs:
             final _overlayStore = OverlayStore();
             List<OverlayItem> _overlays = [];
 
-            // WebRTC
             final _localRenderer = RTCVideoRenderer();
             final _remoteRenderer = RTCVideoRenderer();
             RTCPeerConnection? _pc;
@@ -1030,7 +1179,8 @@ jobs:
                     'facingMode': 'user',
                   },
                 };
-                _localStream = await navigator.mediaDevices.getUserMedia(constraints);
+                _localStream = await navigator.mediaDevices
+                    .getUserMedia(constraints);
                 _localRenderer.srcObject = _localStream;
                 if (mounted) setState(() => _webrtcReady = true);
               } catch (e) {
@@ -1068,7 +1218,6 @@ jobs:
               final offer = await _pc!.createOffer();
               await _pc!.setLocalDescription(offer);
               debugPrint('Offer: ${offer.sdp}');
-              // In production, send offer via signaling server
             }
 
             @override
@@ -1102,18 +1251,29 @@ jobs:
               });
             }
             void _selPrev(int i) {
-              setState(() { for (var k = 0; k < _camCount; k++) _prev[k] = false;
-                _prev[i] = true; });
+              setState(() {
+                for (var k = 0; k < _camCount; k++) _prev[k] = false;
+                _prev[i] = true;
+              });
             }
             void _setLive(int i) {
-              setState(() { for (var k = 0; k < _camCount; k++) {
-                _live[k] = false; _prev[k] = false; } _live[i] = true; });
+              setState(() {
+                for (var k = 0; k < _camCount; k++) {
+                  _live[k] = false; _prev[k] = false;
+                }
+                _live[i] = true;
+              });
             }
-            void _add() { if (_camCount >= 15) return; setState(() => _camCount++); }
+            void _add() {
+              if (_camCount >= 15) return;
+              setState(() => _camCount++);
+            }
             Future<void> _rm(int i) async {
               if (_camCount <= 1) return;
-              final ok = await showDialog<bool>(context: context, builder: (ctx) =>
-                AlertDialog(backgroundColor: _panel, title: const Text('Remove camera?'),
+              final ok = await showDialog<bool>(context: context,
+                builder: (ctx) => AlertDialog(
+                  backgroundColor: _panel,
+                  title: const Text('Remove camera?'),
                   content: Text('Remove CAM ${i + 1}?'),
                   actions: [
                     TextButton(onPressed: () => Navigator.pop(ctx, false),
@@ -1124,29 +1284,34 @@ jobs:
               if (ok != true) return;
               setState(() {
                 _camCount--;
-                if (!_live.sublist(0, _camCount).contains(true) && _camCount > 0)
-                  _live[0] = true;
-                if (!_prev.sublist(0, _camCount).contains(true) && _camCount > 1)
-                  _prev[1] = true;
+                if (!_live.sublist(0, _camCount).contains(true)
+                    && _camCount > 0) { _live[0] = true; }
+                if (!_prev.sublist(0, _camCount).contains(true)
+                    && _camCount > 1) { _prev[1] = true; }
               });
             }
             Future<void> _pick() async {
-              final c = await showModalBottomSheet<int>(context: context,
-                backgroundColor: _panel, builder: (ctx) => SafeArea(
-                  child: SizedBox(height: MediaQuery.of(ctx).size.height * 0.75,
+              final c = await showModalBottomSheet<int>(
+                context: context, backgroundColor: _panel,
+                builder: (ctx) => SafeArea(
+                  child: SizedBox(
+                    height: MediaQuery.of(ctx).size.height * 0.75,
                     child: Column(children: [
                       const Padding(padding: EdgeInsets.all(16),
-                        child: Text('NUMBER OF CAMERAS', style: TextStyle(
-                          color: Colors.white70, fontSize: 12,
-                          letterSpacing: 3, fontWeight: FontWeight.w800))),
+                        child: Text('NUMBER OF CAMERAS',
+                          style: TextStyle(color: Colors.white70,
+                            fontSize: 12, letterSpacing: 3,
+                            fontWeight: FontWeight.w800))),
                       const Divider(height: 1, color: Colors.white12),
-                      Expanded(child: ListView.builder(itemCount: 15, itemBuilder: (_, i) {
+                      Expanded(child: ListView.builder(
+                        itemCount: 15, itemBuilder: (_, i) {
                         final n = i + 1;
                         return ListTile(
                           title: Text('$n camera${n == 1 ? "" : "s"}',
                             style: const TextStyle(color: Colors.white)),
                           trailing: n == _camCount
-                            ? const Icon(Icons.check, color: Colors.tealAccent) : null,
+                              ? const Icon(Icons.check,
+                                  color: Colors.tealAccent) : null,
                           onTap: () => Navigator.pop(ctx, n));
                       })),
                     ]))));
@@ -1166,25 +1331,28 @@ jobs:
 
             @override
             Widget build(BuildContext context) {
-              return Scaffold(backgroundColor: _bg, body: SafeArea(child: Stack(children: [
-                Column(children: [
-                  _top(),
-                  if (_showLiveCamera)
-                    Expanded(child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Container(
-                        margin: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(border: Border.all(color: _yellow, width: 1.5)),
-                        child: const LiveCamera(front: false),
-                      ),
-                    )),
-                  if (!_showLiveCamera) _strip(),
-                  _tabs(),
-                  Expanded(child: _tab == 1 ? _grid() : _prog()),
-                  _bar(),
-                ]),
-                if (_menuOpen) _menu(),
-              ])));
+              return Scaffold(backgroundColor: _bg,
+                body: SafeArea(child: Stack(children: [
+                  Column(children: [
+                    _top(),
+                    if (_showLiveCamera)
+                      Expanded(child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          margin: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: _yellow, width: 1.5)),
+                          child: const LiveCamera(front: false),
+                        ),
+                      )),
+                    if (!_showLiveCamera) _strip(),
+                    _tabs(),
+                    Expanded(child: _tab == 1 ? _grid() : _prog()),
+                    _bar(),
+                  ]),
+                  if (_menuOpen) _menu(),
+                ])));
             }
 
             Widget _top() {
@@ -1192,22 +1360,29 @@ jobs:
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 child: Row(children: [
                   Container(width: 7, height: 7, decoration: BoxDecoration(
-                    color: _onAir ? _red : Colors.grey, shape: BoxShape.circle)),
+                    color: _onAir ? _red : Colors.grey,
+                    shape: BoxShape.circle)),
                   const SizedBox(width: 6),
                   Text(_onAir ? 'ON AIR' : 'OFFLINE', style: TextStyle(
                     color: _onAir ? _red : Colors.grey, fontSize: 10,
                     fontWeight: FontWeight.w900, letterSpacing: 2)),
                   const SizedBox(width: 10),
-                  Container(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                    decoration: BoxDecoration(color: _blue.withOpacity(0.2),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: _blue.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(3)),
                     child: Text('$_camCount CAMS', style: const TextStyle(
                       color: _blue, fontSize: 8,
                       fontWeight: FontWeight.w900, letterSpacing: 1))),
                   if (_webrtcReady) ...[
                     const SizedBox(width: 6),
-                    Container(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                      decoration: BoxDecoration(color: Colors.green.withOpacity(0.2),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.2),
                         borderRadius: BorderRadius.circular(3)),
                       child: const Text('WEBRTC', style: TextStyle(
                         color: Colors.greenAccent, fontSize: 8,
@@ -1217,13 +1392,17 @@ jobs:
                   Text(_time, style: const TextStyle(color: Colors.white,
                     fontSize: 10, fontWeight: FontWeight.w700)),
                   const SizedBox(width: 10),
-                  GestureDetector(onTap: () => setState(() => _menuOpen = !_menuOpen),
-                    child: const Icon(Icons.menu, color: Colors.white, size: 18)),
+                  GestureDetector(
+                    onTap: () => setState(() => _menuOpen = !_menuOpen),
+                    child: const Icon(Icons.menu,
+                      color: Colors.white, size: 18)),
                 ]));
             }
             Widget _strip() {
               final items = <Widget>[];
-              for (var i = 0; i < _camCount; i++) items.add(Expanded(child: _tile(i)));
+              for (var i = 0; i < _camCount; i++) {
+                items.add(Expanded(child: _tile(i)));
+              }
               items.add(SizedBox(width: 48, child: _addTile()));
               return Container(height: 64, color: _bg,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -1234,46 +1413,62 @@ jobs:
               final p = _prev[i];
               final bc = l ? _red : (p ? _yellow : _grey);
               final dc = l ? _red : (p ? _yellow : Colors.grey);
-              return Padding(padding: const EdgeInsets.symmetric(horizontal: 2),
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
                 child: GestureDetector(
                   onTap: () => _selPrev(i),
                   onDoubleTap: () => _setLive(i),
                   onLongPress: () => _rm(i),
-                  child: Container(decoration: BoxDecoration(color: Colors.black,
-                    border: Border.all(color: bc, width: (l || p) ? 2.0 : 1.0),
-                    borderRadius: BorderRadius.circular(3)),
+                  child: Container(
+                    decoration: BoxDecoration(color: Colors.black,
+                      border: Border.all(color: bc,
+                        width: (l || p) ? 2.0 : 1.0),
+                      borderRadius: BorderRadius.circular(3)),
                     child: Stack(children: [
-                      Positioned(top: 3, left: 3, child: Container(width: 5, height: 5,
-                        decoration: BoxDecoration(color: dc, shape: BoxShape.circle))),
+                      Positioned(top: 3, left: 3, child: Container(
+                        width: 5, height: 5,
+                        decoration: BoxDecoration(
+                          color: dc, shape: BoxShape.circle))),
                       if (l) Positioned(top: 3, right: 3, child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4, vertical: 1),
                         decoration: BoxDecoration(color: _red,
                           borderRadius: BorderRadius.circular(2)),
-                        child: const Text('LIVE', style: TextStyle(color: Colors.white,
-                          fontSize: 6, fontWeight: FontWeight.w900, letterSpacing: 1)))),
-                      Positioned(left: 4, bottom: 3, child: Text('CAM ${i + 1}',
-                        style: const TextStyle(color: Colors.white, fontSize: 7,
-                          fontWeight: FontWeight.w900, letterSpacing: 1))),
+                        child: const Text('LIVE', style: TextStyle(
+                          color: Colors.white, fontSize: 6,
+                          fontWeight: FontWeight.w900, letterSpacing: 1)))),
+                      Positioned(left: 4, bottom: 3,
+                        child: Text('CAM ${i + 1}',
+                          style: const TextStyle(color: Colors.white,
+                            fontSize: 7, fontWeight: FontWeight.w900,
+                            letterSpacing: 1))),
                     ]))));
             }
             Widget _addTile() {
-              return Padding(padding: const EdgeInsets.symmetric(horizontal: 2),
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
                 child: GestureDetector(onTap: _add,
-                  child: Container(decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(3),
-                    border: Border.all(color: Colors.tealAccent, width: 1)),
-                    child: const Column(mainAxisAlignment: MainAxisAlignment.center,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(3),
+                      border: Border.all(
+                        color: Colors.tealAccent, width: 1)),
+                    child: const Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Icon(Icons.add, color: Colors.tealAccent, size: 18),
                         SizedBox(height: 2),
-                        Text('Add', style: TextStyle(color: Colors.tealAccent, fontSize: 7)),
+                        Text('Add', style: TextStyle(
+                          color: Colors.tealAccent, fontSize: 7)),
                       ]))));
             }
             Widget _tabs() {
               return Container(height: 24, color: _bg,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 child: Row(children: [
-                  _tabBtn('PROGRAM', 0), const SizedBox(width: 20), _tabBtn('MULTIVIEW', 1),
+                  _tabBtn('PROGRAM', 0),
+                  const SizedBox(width: 20),
+                  _tabBtn('MULTIVIEW', 1),
                 ]));
             }
             Widget _tabBtn(String label, int idx) {
@@ -1281,49 +1476,64 @@ jobs:
               return GestureDetector(onTap: () => setState(() => _tab = idx),
                 child: Text(label, style: TextStyle(
                   color: a ? Colors.white : Colors.white54, fontSize: 9,
-                  fontWeight: a ? FontWeight.w900 : FontWeight.w600, letterSpacing: 2)));
+                  fontWeight: a ? FontWeight.w900 : FontWeight.w600,
+                  letterSpacing: 2)));
             }
             Widget _prog() {
-              return Padding(padding: const EdgeInsets.fromLTRB(10, 2, 10, 2),
-                child: Container(decoration: BoxDecoration(color: Colors.black,
-                  border: Border.all(color: _yellow, width: 1.5),
-                  borderRadius: BorderRadius.circular(4)),
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(10, 2, 10, 2),
+                child: Container(
+                  decoration: BoxDecoration(color: Colors.black,
+                    border: Border.all(color: _yellow, width: 1.5),
+                    borderRadius: BorderRadius.circular(4)),
                   child: LayoutBuilder(builder: (context, cons) {
                     final w = cons.maxWidth;
                     final pi = _prev.indexOf(true);
                     final pn = pi >= 0 ? pi + 1 : 1;
                     return Stack(children: [
-                      const Center(child: Column(mainAxisAlignment: MainAxisAlignment.center,
+                      const Center(child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.videocam_off, color: Colors.white24, size: 32),
+                          Icon(Icons.videocam_off,
+                            color: Colors.white24, size: 32),
                           SizedBox(height: 6),
                           Text('WAITING FOR CAMERA', style: TextStyle(
-                            color: Colors.white38, fontSize: 10, letterSpacing: 2)),
+                            color: Colors.white38, fontSize: 10,
+                            letterSpacing: 2)),
                         ])),
                       Positioned(top: 6, left: 6, child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(color: _red,
                           borderRadius: BorderRadius.circular(2)),
-                        child: const Text('PROGRAM', style: TextStyle(color: Colors.white,
-                          fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1.5)))),
+                        child: const Text('PROGRAM', style: TextStyle(
+                          color: Colors.white, fontSize: 8,
+                          fontWeight: FontWeight.w900, letterSpacing: 1.5)))),
                       if (_overlays.isNotEmpty)
-                        Positioned.fill(child: OverlayRenderer(overlays: _overlays)),
+                        Positioned.fill(child: OverlayRenderer(
+                          overlays: _overlays)),
                       Positioned(right: 8, bottom: 8,
                         width: w * 0.28, height: w * 0.28 * 9 / 16,
-                        child: Container(decoration: BoxDecoration(color: Colors.black,
-                          border: Border.all(color: _yellow, width: 1.5),
-                          borderRadius: BorderRadius.circular(3)),
+                        child: Container(
+                          decoration: BoxDecoration(color: Colors.black,
+                            border: Border.all(color: _yellow, width: 1.5),
+                            borderRadius: BorderRadius.circular(3)),
                           child: Stack(children: [
-                            Center(child: Text('CAM $pn', style: const TextStyle(
-                              color: Colors.white24, fontSize: 11,
-                              fontWeight: FontWeight.w900, letterSpacing: 2))),
+                            Center(child: Text('CAM $pn',
+                              style: const TextStyle(
+                                color: Colors.white24, fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 2))),
                             Positioned(top: 3, left: 3, child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4, vertical: 1),
                               decoration: BoxDecoration(color: _yellow,
                                 borderRadius: BorderRadius.circular(2)),
-                              child: const Text('PREVIEW', style: TextStyle(
-                                color: Colors.black, fontSize: 6,
-                                fontWeight: FontWeight.w900, letterSpacing: 1)))),
+                              child: const Text('PREVIEW',
+                                style: TextStyle(color: Colors.black,
+                                  fontSize: 6,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1)))),
                           ]))),
                     ]);
                   })));
@@ -1343,20 +1553,25 @@ jobs:
                     final l = _live[i];
                     final p = _prev[i];
                     final bc = l ? _red : (p ? _yellow : _grey);
-                    return GestureDetector(onTap: () => _selPrev(i), onLongPress: () => _rm(i),
-                      child: Container(decoration: BoxDecoration(color: Colors.black,
-                        border: Border.all(color: bc, width: 1.5),
-                        borderRadius: BorderRadius.circular(3)),
-                        child: Center(child: Text('CAM ${i + 1}', style: const TextStyle(
-                          color: Colors.white70, fontSize: 10,
-                          fontWeight: FontWeight.w800, letterSpacing: 2)))));
+                    return GestureDetector(
+                      onTap: () => _selPrev(i),
+                      onLongPress: () => _rm(i),
+                      child: Container(
+                        decoration: BoxDecoration(color: Colors.black,
+                          border: Border.all(color: bc, width: 1.5),
+                          borderRadius: BorderRadius.circular(3)),
+                        child: Center(child: Text('CAM ${i + 1}',
+                          style: const TextStyle(color: Colors.white70,
+                            fontSize: 10, fontWeight: FontWeight.w800,
+                            letterSpacing: 2)))));
                   }));
             }
             Widget _bar() {
               return Container(height: 48, color: _bg,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 child: Row(children: [
-                  GestureDetector(onTap: () => setState(() => _onAir = !_onAir),
+                  GestureDetector(
+                    onTap: () => setState(() => _onAir = !_onAir),
                     child: Container(height: 36,
                       padding: const EdgeInsets.symmetric(horizontal: 14),
                       decoration: BoxDecoration(
@@ -1366,25 +1581,34 @@ jobs:
                         Icon(_onAir ? Icons.stop_circle : Icons.podcasts,
                           color: Colors.white, size: 16),
                         const SizedBox(width: 6),
-                        Text(_onAir ? 'END STREAM' : 'GO LIVE', style: const TextStyle(
-                          color: Colors.white, fontSize: 11,
-                          fontWeight: FontWeight.w900, letterSpacing: 1.2)),
+                        Text(_onAir ? 'END STREAM' : 'GO LIVE',
+                          style: const TextStyle(color: Colors.white,
+                            fontSize: 11, fontWeight: FontWeight.w900,
+                            letterSpacing: 1.2)),
                       ]))),
                   const SizedBox(width: 8),
-                  GestureDetector(onTap: () => setState(() => _showLiveCamera = !_showLiveCamera),
+                  GestureDetector(
+                    onTap: () => setState(
+                      () => _showLiveCamera = !_showLiveCamera),
                     child: Container(height: 36,
                       padding: const EdgeInsets.symmetric(horizontal: 10),
                       decoration: BoxDecoration(
-                        color: _showLiveCamera ? _blue.withOpacity(0.3) : Colors.white10,
+                        color: _showLiveCamera
+                            ? _blue.withOpacity(0.3) : Colors.white10,
                         borderRadius: BorderRadius.circular(5),
-                        border: Border.all(color: _showLiveCamera ? _blue : Colors.white24)),
+                        border: Border.all(
+                          color: _showLiveCamera ? _blue : Colors.white24)),
                       child: Row(children: [
-                        Icon(_showLiveCamera ? Icons.videocam : Icons.videocam_off,
-                          color: _showLiveCamera ? _blue : Colors.white54, size: 14),
+                        Icon(
+                          _showLiveCamera
+                              ? Icons.videocam : Icons.videocam_off,
+                          color: _showLiveCamera ? _blue : Colors.white54,
+                          size: 14),
                         const SizedBox(width: 4),
                         Text('LIVE CAM', style: TextStyle(
                           color: _showLiveCamera ? _blue : Colors.white54,
-                          fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1)),
+                          fontSize: 9, fontWeight: FontWeight.w900,
+                          letterSpacing: 1)),
                       ]))),
                   const Spacer(),
                   GestureDetector(onTap: _take,
@@ -1393,58 +1617,70 @@ jobs:
                       decoration: BoxDecoration(color: _red,
                         borderRadius: BorderRadius.circular(5)),
                       child: const Row(children: [
-                        Icon(Icons.fiber_manual_record, color: Colors.white, size: 10),
+                        Icon(Icons.fiber_manual_record,
+                          color: Colors.white, size: 10),
                         SizedBox(width: 6),
-                        Text('TAKE', style: TextStyle(color: Colors.white, fontSize: 12,
-                          fontWeight: FontWeight.w900, letterSpacing: 2.5)),
+                        Text('TAKE', style: TextStyle(color: Colors.white,
+                          fontSize: 12, fontWeight: FontWeight.w900,
+                          letterSpacing: 2.5)),
                       ]))),
                 ]));
             }
             Widget _menu() {
               return Positioned(top: 0, right: 0, bottom: 0,
-                child: Container(width: 220, color: _bg, child: Column(children: [
-                  Container(height: 40,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    decoration: const BoxDecoration(border: Border(
-                      bottom: BorderSide(color: _grey))),
-                    child: Row(children: [
-                      const Text('Menu', style: TextStyle(color: Colors.white,
-                        fontSize: 12, fontWeight: FontWeight.w800)),
-                      const Spacer(),
-                      GestureDetector(onTap: () => setState(() => _menuOpen = false),
-                        child: const Icon(Icons.close, color: Colors.white, size: 16)),
-                    ])),
-                  _mi(Icons.grid_view, 'Camera Count', () {
-                    setState(() => _menuOpen = false); _pick();
-                  }),
-                  _mi(Icons.add, 'Add Camera', () {
-                    setState(() => _menuOpen = false); _add();
-                  }),
-                  _mi(Icons.layers, 'Graphics', _openG, teal: true),
-                  _mi(Icons.link, 'Link Accounts', _openA),
-                  _mi(Icons.phone_in_talk, 'Call Camera (WebRTC)', () {
-                    setState(() => _menuOpen = false); _callPeer();
-                  }),
-                ])));
+                child: Container(width: 220, color: _bg,
+                  child: Column(children: [
+                    Container(height: 40,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: const BoxDecoration(border: Border(
+                        bottom: BorderSide(color: _grey))),
+                      child: Row(children: [
+                        const Text('Menu', style: TextStyle(
+                          color: Colors.white, fontSize: 12,
+                          fontWeight: FontWeight.w800)),
+                        const Spacer(),
+                        GestureDetector(
+                          onTap: () => setState(() => _menuOpen = false),
+                          child: const Icon(Icons.close,
+                            color: Colors.white, size: 16)),
+                      ])),
+                    _mi(Icons.grid_view, 'Camera Count', () {
+                      setState(() => _menuOpen = false); _pick();
+                    }),
+                    _mi(Icons.add, 'Add Camera', () {
+                      setState(() => _menuOpen = false); _add();
+                    }),
+                    _mi(Icons.layers, 'Graphics', _openG, teal: true),
+                    _mi(Icons.link, 'Link Accounts', _openA),
+                    _mi(Icons.phone_in_talk, 'Call Camera (WebRTC)', () {
+                      setState(() => _menuOpen = false); _callPeer();
+                    }),
+                  ])));
             }
-            Widget _mi(IconData icon, String label, VoidCallback onTap, {bool teal = false}) {
-              return InkWell(onTap: onTap, child: SizedBox(height: 38,
-                child: Padding(padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Row(children: [
-                    Icon(icon, color: teal ? Colors.tealAccent : Colors.white70, size: 16),
-                    const SizedBox(width: 10),
-                    Text(label, style: TextStyle(
-                      color: teal ? Colors.tealAccent : Colors.white,
-                      fontSize: 11, fontWeight: FontWeight.w600)),
-                  ]))));
+            Widget _mi(IconData icon, String label, VoidCallback onTap,
+                {bool teal = false}) {
+              return InkWell(onTap: onTap,
+                child: SizedBox(height: 38,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Row(children: [
+                      Icon(icon,
+                        color: teal ? Colors.tealAccent : Colors.white70,
+                        size: 16),
+                      const SizedBox(width: 10),
+                      Text(label, style: TextStyle(
+                        color: teal ? Colors.tealAccent : Colors.white,
+                        fontSize: 11, fontWeight: FontWeight.w600)),
+                    ]))));
             }
           }
           D
 
+      # ─────────────────────────────────────────────────────────────
       # 4) Modern Android Gradle configuration
+      # ─────────────────────────────────────────────────────────────
       - name: Configure Android
         run: |
-          # Fix the Gradle version issue
           mkdir -p android/gradle/wrapper
           cat > android/gradle/wrapper/gradle-wrapper.properties << 'E'
           distributionBase=GRADLE_USER_HOME
@@ -1469,7 +1705,7 @@ jobs:
           plugins {
               id "dev.flutter.flutter-plugin-loader" version "1.0.0"
               id "com.android.application" version "8.5.0" apply false
-              id "org.jetbrains.kotlin.android" version "2.1.0" apply false
+              id "org.jetbrains.kotlin.android" version "1.9.24" apply false
           }
           include ":app"
           E
@@ -1520,6 +1756,11 @@ jobs:
                   targetSdk 35
                   versionCode 1
                   versionName "1.0"
+              }
+              packagingOptions {
+                  exclude 'project.clj'
+                  exclude 'META-INF/proguard/*'
+                  exclude 'META-INF/*.kotlin_module'
               }
               buildTypes {
                   release {
@@ -1588,7 +1829,9 @@ jobs:
           </manifest>
           XML
 
-      # 5) Build
+      # ─────────────────────────────────────────────────────────────
+      # 5) Build APK
+      # ─────────────────────────────────────────────────────────────
       - name: Build APK
         run: |
           rm -f pubspec.lock
