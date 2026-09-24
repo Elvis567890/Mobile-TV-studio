@@ -10,7 +10,7 @@ jobs:
         with: {distribution: temurin, java-version: '17'}
 
       - uses: subosito/flutter-action@v2
-        with: {flutter-version: '3.29.0', channel: stable, cache: true}
+        with: {flutter-version: '3.27.0', channel: stable, cache: true}
 
       # ─────────────────────────────────────────────────────────────
       # 1) Generate project scaffolding FIRST
@@ -241,18 +241,19 @@ jobs:
 
           # ─── lib/services/streaming_service.dart ───
           cat > lib/services/streaming_service.dart << 'D'
-          import 'package:camera/camera.dart';
-          import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
+          import 'package:rtmp_broadcaster/camera.dart';
           import 'package:mic_info/mic_info.dart';
 
           class StreamingService {
             static CameraController? _controller;
             static bool _isStreaming = false;
             static bool _isRecording = false;
+            static bool _isMicMuted = false;
 
             static CameraController? get controller => _controller;
             static bool get isStreaming => _isStreaming;
             static bool get isRecording => _isRecording;
+            static bool get isMicMuted => _isMicMuted;
 
             static Future<CameraController?> initialize({bool front = false}) async {
               final cams = await availableCameras();
@@ -289,7 +290,11 @@ jobs:
             }) async {
               if (_controller == null) return;
               final url = '$rtmpUrl/$streamKey';
-              await _controller!.startVideoStreaming(url, bitrate: bitrate);
+              await _controller!.startVideoStreaming(
+                url,
+                bitrate: bitrate,
+                androidUseOpenGL: false,
+              );
               _isStreaming = true;
             }
 
@@ -327,14 +332,22 @@ jobs:
               _controller = CameraController(
                 cam,
                 ResolutionPreset.high,
-                enableAudio: true,
+                enableAudio: !_isMicMuted,
               );
               await _controller!.initialize();
             }
 
             static Future<void> muteMic(bool muted) async {
               if (_controller == null) return;
-              await _controller!.setMicrophoneMute(muted);
+              final cam = _controller!.description;
+              await _controller!.dispose();
+              _controller = CameraController(
+                cam,
+                ResolutionPreset.high,
+                enableAudio: !muted,
+              );
+              await _controller!.initialize();
+              _isMicMuted = muted;
             }
 
             static Future<void> dispose() async {
@@ -342,6 +355,7 @@ jobs:
               _controller = null;
               _isStreaming = false;
               _isRecording = false;
+              _isMicMuted = false;
             }
           }
           D
@@ -396,7 +410,7 @@ jobs:
 
           # ─── lib/widgets/live_camera.dart ───
           cat > lib/widgets/live_camera.dart << 'D'
-          import 'package:camera/camera.dart';
+          import 'package:rtmp_broadcaster/camera.dart';
           import 'package:flutter/material.dart';
           class LiveCamera extends StatefulWidget {
             final bool front;
@@ -521,8 +535,8 @@ jobs:
 
           # ─── lib/screens/camera_screen.dart ───
           cat > lib/screens/camera_screen.dart << 'D'
-          import 'package:camera/camera.dart';
           import 'package:flutter/material.dart';
+          import 'package:rtmp_broadcaster/camera.dart';
           import '../services/streaming_service.dart';
           import '../services/account_store.dart';
 
@@ -573,9 +587,7 @@ jobs:
             Future<void> _toggleLive() async {
               if (_live) {
                 await StreamingService.stopStream();
-                if (mounted) setState(() {
-                  _live = false; _status = 'STOPPED';
-                });
+                if (mounted) setState(() { _live = false; _status = 'STOPPED'; });
                 return;
               }
               final store = AccountStore();
@@ -595,9 +607,7 @@ jobs:
                   rtmpUrl: acct.rtmpUrl,
                   streamKey: acct.streamKey,
                 );
-                if (mounted) setState(() {
-                  _live = true; _status = 'LIVE';
-                });
+                if (mounted) setState(() { _live = true; _status = 'LIVE'; });
               } catch (e) {
                 if (mounted) setState(() => _status = 'ERROR');
               }
@@ -708,6 +718,7 @@ jobs:
                         _micMuted ? Colors.redAccent : Colors.greenAccent, 64,
                         () async {
                           await StreamingService.muteMic(!_micMuted);
+                          _cam = StreamingService.controller;
                           if (mounted) setState(() => _micMuted = !_micMuted);
                         }),
                       const SizedBox(height: 8),
