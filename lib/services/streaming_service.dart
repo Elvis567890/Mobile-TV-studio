@@ -1,16 +1,16 @@
-import 'dart:async';
-import 'package:camera/camera.dart';
-import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
+import 'package:rtmp_broadcaster/camera.dart';
 import 'package:mic_info/mic_info.dart';
 
 class StreamingService {
   static CameraController? _controller;
   static bool _isStreaming = false;
   static bool _isRecording = false;
+  static bool _isMicMuted = false;
 
   static CameraController? get controller => _controller;
   static bool get isStreaming => _isStreaming;
   static bool get isRecording => _isRecording;
+  static bool get isMicMuted => _isMicMuted;
 
   static Future<CameraController?> initialize({bool front = false}) async {
     final cams = await availableCameras();
@@ -22,8 +22,11 @@ class StreamingService {
       (c) => c.lensDirection == lens,
       orElse: () => cams.first,
     );
-    _controller = CameraController(cam, ResolutionPreset.high,
-        enableAudio: true);
+    _controller = CameraController(
+      cam,
+      ResolutionPreset.high,
+      enableAudio: true,
+    );
     await _controller!.initialize();
     return _controller;
   }
@@ -32,7 +35,7 @@ class StreamingService {
     try {
       final mics = await MicInfo.getWiredMicrophones();
       return mics.map((m) => m.productName).toList();
-    } catch (e) {
+    } catch (_) {
       return [];
     }
   }
@@ -44,7 +47,12 @@ class StreamingService {
   }) async {
     if (_controller == null) return;
     final url = '$rtmpUrl/$streamKey';
-    await _controller!.startVideoStreaming(url, bitrate: bitrate);
+    // androidUseOpenGL is REQUIRED in rtmp_broadcaster 2.x
+    await _controller!.startVideoStreaming(
+      url,
+      bitrate: bitrate,
+      androidUseOpenGL: false,
+    );
     _isStreaming = true;
   }
 
@@ -54,7 +62,7 @@ class StreamingService {
     _isStreaming = false;
   }
 
-  static Future<void> startRecording(String path) async {
+  static Future<void> startRecording() async {
     if (_controller == null) return;
     await _controller!.startVideoRecording();
     _isRecording = true;
@@ -67,9 +75,10 @@ class StreamingService {
   }
 
   static Future<void> switchCamera() async {
-    if (_controller == null) return;
     final cams = await availableCameras();
-    final current = _controller!.description.lensDirection;
+    if (cams.isEmpty) return;
+    final current = _controller?.description.lensDirection
+        ?? CameraLensDirection.back;
     final target = current == CameraLensDirection.back
         ? CameraLensDirection.front
         : CameraLensDirection.back;
@@ -77,15 +86,30 @@ class StreamingService {
       (c) => c.lensDirection == target,
       orElse: () => cams.first,
     );
-    await _controller!.dispose();
-    _controller = CameraController(cam, ResolutionPreset.high,
-        enableAudio: true);
+    await _controller?.dispose();
+    _controller = CameraController(
+      cam,
+      ResolutionPreset.high,
+      enableAudio: true,
+    );
     await _controller!.initialize();
   }
 
+  /// Toggle mic mute by stopping/restarting audio.
+  /// rtmp_broadcaster 2.x has no setMicrophoneMute method,
+  /// so we recreate the controller with audio disabled.
   static Future<void> muteMic(bool muted) async {
     if (_controller == null) return;
-    await _controller!.setMicrophoneMute(muted);
+    final cam = _controller!.description;
+    final currentPreset = _controller!.value.resolutionPreset;
+    await _controller!.dispose();
+    _controller = CameraController(
+      cam,
+      currentPreset,
+      enableAudio: !muted,
+    );
+    await _controller!.initialize();
+    _isMicMuted = muted;
   }
 
   static Future<void> dispose() async {
@@ -93,5 +117,6 @@ class StreamingService {
     _controller = null;
     _isStreaming = false;
     _isRecording = false;
+    _isMicMuted = false;
   }
 }
