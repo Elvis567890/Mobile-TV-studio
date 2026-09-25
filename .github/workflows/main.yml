@@ -304,9 +304,9 @@ jobs:
               _isStreaming = false;
             }
 
-            static Future<void> startRecording() async {
+            static Future<void> startRecording(String path) async {
               if (_controller == null) return;
-              await _controller!.startVideoRecording();
+              await _controller!.startVideoRecording(path);
               _isRecording = true;
             }
 
@@ -621,7 +621,9 @@ jobs:
                 });
                 return;
               }
-              await StreamingService.startRecording();
+              final path = '/storage/emulated/0/Movies/abrimax_'
+                  '${DateTime.now().millisecondsSinceEpoch}.mp4';
+              await StreamingService.startRecording(path);
               if (mounted) setState(() {
                 _recording = true; _status = 'RECORDING';
               });
@@ -635,6 +637,8 @@ jobs:
 
             @override
             Widget build(BuildContext context) {
+              final isReady =
+                  _cam != null && (_cam!.value.isInitialized ?? false);
               return Scaffold(
                 backgroundColor: const Color(0xFF0A0A0F),
                 appBar: AppBar(
@@ -667,7 +671,7 @@ jobs:
                         width: _live ? 3 : 1)),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(6),
-                      child: _cam != null && _cam!.value.isInitialized
+                      child: isReady
                           ? CameraPreview(_cam!)
                           : const Center(child: CircularProgressIndicator(
                               color: Colors.redAccent)),
