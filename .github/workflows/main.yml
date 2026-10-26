@@ -2040,12 +2040,20 @@ jobs:
           tasks.register("clean", Delete) { delete rootProject.buildDir }
           E
 
+          # FIX: Exclude the old PedroSG94 RTSP library to prevent Duplicate class error
           cat > android/app/build.gradle << 'E'
           plugins {
               id "com.android.application"
               id "kotlin-android"
               id "dev.flutter.flutter-gradle-plugin"
           }
+
+          configurations.all {
+              exclude group: 'com.github.pedroSG94.rtmp-rtsp-stream-client-java', module: 'rtsp'
+              exclude group: 'com.github.pedroSG94.rtmp-rtsp-stream-client-java', module: 'rtmp'
+              exclude group: 'com.github.pedroSG94.rtmp-rtsp-stream-client-java', module: 'library'
+          }
+
           android {
               namespace "com.yourcompany.mobile_tv_studio"
               compileSdk 35
