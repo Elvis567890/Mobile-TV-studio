@@ -53,7 +53,7 @@ jobs:
             shared_preferences: ^2.3.2
             uuid: ^4.5.0
             flutter_webrtc: ^0.12.5
-            rtmp_broadcaster: ^3.1.1
+            rtmp_broadcaster: ^2.3.4
             rtmpstreamer: ^0.2.3
             mic_info: ^0.0.5
             permission_handler: ^11.3.1
@@ -84,8 +84,6 @@ jobs:
             android_12:
               color: "#0A0A0F"
               image: "assets/icon/app_icon.png"
-          dependency_overrides:
-            package_info_plus: ^8.0.0
           P
 
       # 3) Write all Dart sources
@@ -2118,7 +2116,7 @@ jobs:
           D
 
       # ─────────────────────────────────────────────────────────────
-      # 4) Modern Android Gradle configuration
+      # 4) Android Gradle configuration (Aligned with Flutter 3.27.0)
       # ─────────────────────────────────────────────────────────────
       - name: Configure Android
         run: |
@@ -2128,7 +2126,7 @@ jobs:
           distributionPath=wrapper/dists
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.9-all.zip
           E
 
           cat > android/settings.gradle << 'E'
@@ -2145,8 +2143,8 @@ jobs:
           }
           plugins {
               id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-              id "com.android.application" version "8.5.0" apply false
-              id "org.jetbrains.kotlin.android" version "2.1.20" apply false
+              id "com.android.application" version "8.6.0" apply false
+              id "org.jetbrains.kotlin.android" version "2.0.0" apply false
           }
           include ":app"
           E
@@ -2166,7 +2164,7 @@ jobs:
                   if (project.plugins.hasPlugin("com.android.application") ||
                       project.plugins.hasPlugin("com.android.library")) {
                       project.android {
-                          compileSdkVersion 34
+                          compileSdkVersion 35
                           buildToolsVersion "34.0.0"
                       }
                   }
@@ -2176,21 +2174,11 @@ jobs:
           tasks.register("clean", Delete) { delete rootProject.buildDir }
           E
 
-          # FIX: Force compatible RootEncoder version for rtmp_broadcaster 3.1.1 and rtmpstreamer 0.2.3
           cat > android/app/build.gradle << 'E'
           plugins {
               id "com.android.application"
               id "kotlin-android"
               id "dev.flutter.flutter-gradle-plugin"
-          }
-
-          configurations.all {
-              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:library:2.6.7'
-              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:rtplibrary:2.6.7'
-              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:encoder:2.6.7'
-              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:rtsp:2.6.7'
-              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:rtmp:2.6.7'
-              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:common:2.6.7'
           }
 
           android {
