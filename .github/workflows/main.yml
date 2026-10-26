@@ -263,7 +263,7 @@ jobs:
               );
               _controller = CameraController(
                 cam,
-                ResolutionPreset.high,
+                ResolutionPreset.medium, // OPTIMIZED FOR OLD ANDROIDS
                 enableAudio: true,
               );
               await _controller!.initialize();
@@ -282,7 +282,7 @@ jobs:
             static Future<void> startStream({
               required String rtmpUrl,
               required String streamKey,
-              int bitrate = 2500 * 1024,
+              int bitrate = 1500 * 1024, // REDUCED BITRATE FOR STABILITY
             }) async {
               if (_controller == null) return;
               final url = '$rtmpUrl/$streamKey';
@@ -296,11 +296,10 @@ jobs:
 
             static Future<void> startStreamToServer(String path) async {
               if (_controller == null) return;
-              // Point to your HostVDS MediaMTX server!
               final url = 'rtmp://13.140.90.83:1935/$path';
               await _controller!.startVideoStreaming(
                 url,
-                bitrate: 2500 * 1024,
+                bitrate: 1500 * 1024, // REDUCED BITRATE
                 androidUseOpenGL: false,
               );
               _isStreaming = true;
@@ -339,7 +338,7 @@ jobs:
               await _controller?.dispose();
               _controller = CameraController(
                 cam,
-                ResolutionPreset.high,
+                ResolutionPreset.medium, // OPTIMIZED
                 enableAudio: !_isMicMuted,
               );
               await _controller!.initialize();
@@ -351,7 +350,7 @@ jobs:
               await _controller!.dispose();
               _controller = CameraController(
                 cam,
-                ResolutionPreset.high,
+                ResolutionPreset.medium, // OPTIMIZED
                 enableAudio: !muted,
               );
               await _controller!.initialize();
@@ -440,8 +439,8 @@ jobs:
                     ? CameraLensDirection.front : CameraLensDirection.back;
                 final cam = cams.firstWhere((c) => c.lensDirection == lens,
                     orElse: () => cams.first);
-                _ctrl = CameraController(cam, ResolutionPreset.high,
-                    enableAudio: true);
+                _ctrl = CameraController(cam, ResolutionPreset.low,
+                    enableAudio: false); // LOW RES & NO AUDIO FOR PREVIEW
                 await _ctrl!.initialize();
                 if (mounted) setState(() => _ready = true);
               } catch (e) {
@@ -470,8 +469,14 @@ jobs:
               }
               final isFront =
                   _ctrl!.description.lensDirection == CameraLensDirection.front;
-              return RotatedBox(quarterTurns: isFront ? 3 : 1,
-                  child: CameraPreview(_ctrl!));
+              
+              return RotatedBox(
+                quarterTurns: isFront ? 3 : 1, 
+                child: AspectRatio(
+                  aspectRatio: _ctrl!.value.aspectRatio,
+                  child: CameraPreview(_ctrl!),
+                ),
+              );
             }
           }
           D
@@ -692,7 +697,13 @@ jobs:
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(6),
                       child: isReady
-                          ? CameraPreview(_cam!)
+                          ? RotatedBox(
+                              quarterTurns: _front ? 3 : 1,
+                              child: AspectRatio(
+                                aspectRatio: _cam!.value.aspectRatio,
+                                child: CameraPreview(_cam!),
+                              ),
+                            )
                           : const Center(child: CircularProgressIndicator(
                               color: Colors.redAccent)),
                     ),
@@ -1135,6 +1146,315 @@ jobs:
           }
           D
 
+          # ─── lib/screens/studio_canvas_screen.dart ───
+          cat > lib/screens/studio_canvas_screen.dart << 'D'
+          import 'dart:async';
+          import 'package:flutter/material.dart';
+          import 'package:video_player/video_player.dart';
+          import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
+          import 'package:wakelock_plus/wakelock_plus.dart';
+          import '../widgets/live_camera.dart';
+
+          class StudioCanvasScreen extends StatefulWidget {
+            const StudioCanvasScreen({super.key});
+            @override
+            State<StudioCanvasScreen> createState() => _StudioCanvasScreenState();
+          }
+
+          class _StudioCanvasScreenState extends State<StudioCanvasScreen> {
+            VideoPlayerController? _videoController;
+            final ScreenStream _screenStream = ScreenStream();
+            bool _isStreaming = false;
+            bool _showCamera = true;
+            int _countdown = 0;
+            Timer? _countdownTimer;
+            
+            final TextEditingController _keyController = TextEditingController();
+            final TextEditingController _tickerController = TextEditingController(text: "WELCOME TO ABRIMAX TV • LIVE 24/7 • ");
+            
+            Offset _camPosition = const Offset(50, 50);
+            double _camWidth = 320;
+            double _camHeight = 240;
+
+            @override
+            void dispose() {
+              _videoController?.dispose();
+              _screenStream.dispose();
+              _keyController.dispose();
+              _tickerController.dispose();
+              _countdownTimer?.cancel();
+              WakelockPlus.disable();
+              super.dispose();
+            }
+
+            Future<void> _loadVideo() async {
+              final ctrl = TextEditingController(text: "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4");
+              final url = await showDialog<String>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  backgroundColor: const Color(0xFF141418),
+                  title: const Text('Load Video URL', style: TextStyle(color: Colors.white)),
+                  content: TextField(controller: ctrl, style: const TextStyle(color: Colors.white)),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('CANCEL')),
+                    FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('LOAD')),
+                  ],
+                ),
+              );
+              if (url == null || url.isEmpty) return;
+
+              _videoController?.dispose();
+              _videoController = VideoPlayerController.networkUrl(Uri.parse(url));
+              await _videoController!.initialize();
+              _videoController!.setLooping(true);
+              _videoController!.setVolume(0);
+              _videoController!.play();
+              setState(() {});
+            }
+
+            Future<void> _toggleStream() async {
+              if (_isStreaming) {
+                await _screenStream.stopStream();
+                setState(() {
+                  _isStreaming = false;
+                  _countdown = 0;
+                });
+                WakelockPlus.disable();
+              } else {
+                if (_keyController.text.trim().isEmpty) return;
+                
+                // Start Countdown
+                setState(() => _countdown = 3);
+                _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+                  if (_countdown > 1) {
+                    setState(() => _countdown--);
+                  } else {
+                    timer.cancel();
+                    setState(() => _countdown = 0);
+                    
+                    // Actually Start Stream
+                    final rtmpUrl = 'rtmp://a.rtmp.youtube.com/live2/${_keyController.text.trim()}';
+                    await _screenStream.startStream(rtmpUrl, bitrate: 2000 * 1024);
+                    await WakelockPlus.enable();
+                    setState(() => _isStreaming = true);
+                  }
+                });
+              }
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                backgroundColor: Colors.black,
+                body: SafeArea(
+                  child: Column(
+                    children: [
+                      // THE BROADCAST CANVAS
+                      Expanded(
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            // 1. Background Video
+                            if (_videoController != null && _videoController!.value.isInitialized)
+                              FittedBox(
+                                fit: BoxFit.cover,
+                                child: SizedBox(
+                                  width: _videoController!.value.size.width,
+                                  height: _videoController!.value.size.height,
+                                  child: VideoPlayer(_videoController!),
+                                ),
+                              )
+                            else
+                              const Center(child: Text('Click "Load Video" to start', style: TextStyle(color: Colors.white54))),
+
+                            // 2. Camera Overlay (Only shows if _showCamera is true)
+                            if (_showCamera)
+                              Positioned(
+                                left: _camPosition.dx,
+                                top: _camPosition.dy,
+                                child: GestureDetector(
+                                  onPanUpdate: (details) {
+                                    if (!_isStreaming) {
+                                      setState(() {
+                                        _camPosition += details.delta;
+                                      });
+                                    }
+                                  },
+                                  child: Container(
+                                    width: _camWidth,
+                                    height: _camHeight,
+                                    decoration: BoxDecoration(
+                                      border: Border.all(color: _isStreaming ? Colors.transparent : Colors.yellow, width: 2),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: const LiveCamera(front: false),
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                            // 3. Scrolling Ticker (Floating Words)
+                            Positioned(
+                              bottom: 0, left: 0, right: 0,
+                              child: Container(
+                                color: Colors.redAccent,
+                                padding: const EdgeInsets.symmetric(vertical: 8),
+                                child: _Ticker(text: _tickerController.text),
+                              ),
+                            ),
+
+                            // 4. LIVE Badge & Countdown
+                            Positioned(
+                              top: 20, left: 20,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: _isStreaming ? Colors.red : Colors.grey,
+                                  borderRadius: BorderRadius.circular(4)
+                                ),
+                                child: Text(_isStreaming ? 'LIVE' : 'PREVIEW', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                              ),
+                            ),
+                            
+                            if (_countdown > 0)
+                              Center(
+                                child: Container(
+                                  padding: const EdgeInsets.all(40),
+                                  decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), shape: BoxShape.circle),
+                                  child: Text('$_countdown', style: const TextStyle(color: Colors.white, fontSize: 80, fontWeight: FontWeight.bold)),
+                                ),
+                              )
+                          ],
+                        ),
+                      ),
+                      
+                      // Control Panel (Hidden when streaming)
+                      if (!_isStreaming && _countdown == 0)
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          color: const Color(0xFF141418),
+                          child: Column(
+                            children: [
+                              Row(
+                                children: [
+                                  ElevatedButton.icon(
+                                    onPressed: _loadVideo,
+                                    icon: const Icon(Icons.movie),
+                                    label: const Text('Load Video'),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: TextField(
+                                      controller: _tickerController,
+                                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                                      decoration: const InputDecoration(
+                                        labelText: 'Scrolling Ticker Text',
+                                        labelStyle: TextStyle(color: Colors.white54),
+                                        isDense: true,
+                                      ),
+                                      onChanged: (val) => setState(() {}),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  ElevatedButton.icon(
+                                    style: ElevatedButton.styleFrom(backgroundColor: _showCamera ? Colors.blueGrey : Colors.orange),
+                                    onPressed: () => setState(() => _showCamera = !_showCamera),
+                                    icon: Icon(_showCamera ? Icons.videocam : Icons.videocam_off),
+                                    label: Text(_showCamera ? 'Hide Camera' : 'Show Camera'),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: TextField(
+                                      controller: _keyController,
+                                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                                      decoration: const InputDecoration(
+                                        labelText: 'YouTube Stream Key',
+                                        labelStyle: TextStyle(color: Colors.white54),
+                                        isDense: true,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  ElevatedButton.icon(
+                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                                    onPressed: _toggleStream,
+                                    icon: const Icon(Icons.podcasts),
+                                    label: const Text('GO LIVE'),
+                                  ),
+                                ],
+                              )
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              );
+            }
+          }
+
+          class _Ticker extends StatefulWidget {
+            final String text;
+            const _Ticker({required this.text});
+            @override
+            State<_Ticker> createState() => _TickerState();
+          }
+
+          class _TickerState extends State<_Ticker> with SingleTickerProviderStateMixin {
+            late ScrollController _scrollController;
+
+            @override
+            void initState() {
+              super.initState();
+              _scrollController = ScrollController();
+              WidgetsBinding.instance.addPostFrameCallback((_) => _scroll());
+            }
+
+            void _scroll() async {
+              while (mounted) {
+                if (_scrollController.hasClients) {
+                  await _scrollController.animateTo(
+                    _scrollController.position.maxScrollExtent,
+                    duration: const Duration(seconds: 10),
+                    curve: Curves.linear,
+                  );
+                  if (_scrollController.hasClients) {
+                    _scrollController.jumpTo(0.0);
+                  }
+                }
+                await Future.delayed(const Duration(milliseconds: 500));
+              }
+            }
+
+            @override
+            void dispose() {
+              _scrollController.dispose();
+              super.dispose();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return SingleChildScrollView(
+                controller: _scrollController,
+                scrollDirection: Axis.horizontal,
+                physics: const NeverScrollableScrollPhysics(),
+                child: Row(
+                  children: [
+                    Text(widget.text, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                    Text(widget.text, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                  ],
+                ),
+              );
+            }
+          }
+          D
+
           # ─── lib/screens/director_screen.dart ───
           cat > lib/screens/director_screen.dart << 'D'
           import 'dart:async';
@@ -1149,6 +1469,7 @@ jobs:
           import '../widgets/live_camera.dart';
           import 'graphics_editor.dart';
           import 'accounts_screen.dart';
+          import 'studio_canvas_screen.dart';
 
           const _bg = Color(0xFF0A0A0F);
           const _panel = Color(0xFF141418);
@@ -1177,13 +1498,6 @@ jobs:
             final _overlayStore = OverlayStore();
             List<OverlayItem> _overlays = [];
 
-            final _localRenderer = RTCVideoRenderer();
-            final _remoteRenderer = RTCVideoRenderer();
-            RTCPeerConnection? _pc;
-            MediaStream? _localStream;
-            MediaStream? _remoteStream;
-            bool _webrtcReady = false;
-
             @override
             void initState() {
               super.initState();
@@ -1195,10 +1509,6 @@ jobs:
             @override
             void dispose() {
               _ticker?.cancel();
-              _localRenderer.dispose();
-              _remoteRenderer.dispose();
-              _pc?.close();
-              _localStream?.dispose();
               super.dispose();
             }
 
@@ -1289,53 +1599,84 @@ jobs:
               setState(() => _menuOpen = false);
               Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountsScreen()));
             }
+            void _openStudioCanvas() {
+              setState(() => _menuOpen = false);
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const StudioCanvasScreen()));
+            }
 
             Future<void> _startAutomatedBroadcast() async {
               final videoCtrl = TextEditingController(text: "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4\nhttps://test-videos.co.uk/vids/sintel/mp4/h264/720/Sintel_720_10s_1MB.mp4");
               final rtmpCtrl = TextEditingController(text: "rtmp://a.rtmp.youtube.com/live2/YOUR_YOUTUBE_KEY");
               final logoCtrl = TextEditingController(text: "https://upload.wikimedia.org/wikipedia/commons/2/20/YouTube_2024.svg");
+              final bannerCtrl = TextEditingController(text: "https://dummyimage.com/300x80/ff0000/ffffff.png&text=BUY+NOW");
+              
+              String logoPos = 'Top Right';
+              String bannerPos = 'Bottom Left';
 
               final result = await showDialog<bool>(
                 context: context,
-                builder: (ctx) => AlertDialog(
-                  backgroundColor: _panel,
-                  title: const Text('24/7 Multi-Platform Broadcast', style: TextStyle(color: Colors.white, fontSize: 16)),
-                  content: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text('Video URLs (One per line):', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                        TextField(
-                          controller: videoCtrl,
-                          maxLines: 3,
-                          style: const TextStyle(color: Colors.white, fontSize: 12),
-                          decoration: const InputDecoration(hintStyle: TextStyle(color: Colors.white24)),
+                builder: (ctx) => StatefulBuilder(
+                  builder: (context, setDialogState) {
+                    return AlertDialog(
+                      backgroundColor: _panel,
+                      title: const Text('24/7 Broadcast + Ads', style: TextStyle(color: Colors.white, fontSize: 16)),
+                      content: SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('Video URLs (One per line):', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            TextField(
+                              controller: videoCtrl,
+                              maxLines: 3,
+                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                              decoration: const InputDecoration(hintStyle: TextStyle(color: Colors.white24)),
+                            ),
+                            const SizedBox(height: 12),
+                            const Text('RTMP URLs (One per line):', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            TextField(
+                              controller: rtmpCtrl,
+                              maxLines: 3,
+                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                              decoration: const InputDecoration(hintStyle: TextStyle(color: Colors.white24)),
+                            ),
+                            const SizedBox(height: 12),
+                            const Text('TV Logo URL (PNG):', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            TextField(
+                              controller: logoCtrl,
+                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                            ),
+                            DropdownButton<String>(
+                              value: logoPos,
+                              dropdownColor: _panel,
+                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                              items: ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
+                              onChanged: (val) { if (val != null) setDialogState(() => logoPos = val); },
+                            ),
+                            const SizedBox(height: 12),
+                            const Text('Advert Banner URL (PNG):', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            TextField(
+                              controller: bannerCtrl,
+                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                            ),
+                            DropdownButton<String>(
+                              value: bannerPos,
+                              dropdownColor: _panel,
+                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                              items: ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
+                              onChanged: (val) { if (val != null) setDialogState(() => bannerPos = val); },
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 12),
-                        const Text('RTMP URLs (One per line):', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                        TextField(
-                          controller: rtmpCtrl,
-                          maxLines: 3,
-                          style: const TextStyle(color: Colors.white, fontSize: 12),
-                          decoration: const InputDecoration(hintStyle: TextStyle(color: Colors.white24)),
-                        ),
-                        const SizedBox(height: 12),
-                        const Text('TV Logo URL (PNG):', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                        TextField(
-                          controller: logoCtrl,
-                          style: const TextStyle(color: Colors.white, fontSize: 12),
-                          decoration: const InputDecoration(hintStyle: TextStyle(color: Colors.white24)),
+                      ),
+                      actions: [
+                        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')),
+                        FilledButton(
+                          onPressed: () => Navigator.pop(ctx, true),
+                          child: const Text('START BROADCAST')
                         ),
                       ],
-                    ),
-                  ),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')),
-                    FilledButton(
-                      onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text('START BROADCAST')
-                    ),
-                  ],
+                    );
+                  }
                 ),
               );
 
@@ -1353,12 +1694,15 @@ jobs:
                       'videos': videos, 
                       'platforms': platforms,
                       'logoUrl': logoCtrl.text.trim(),
+                      'logoPosition': logoPos,
+                      'bannerUrl': bannerCtrl.text.trim(),
+                      'bannerPosition': bannerPos,
                     }),
                   );
                   
                   if (response.statusCode == 200 && mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Broadcast started to all platforms!')),
+                      const SnackBar(content: Text('Broadcast started with Ads!')),
                     );
                   }
                 } catch (e) {
@@ -1470,7 +1814,7 @@ jobs:
                 child: Container(
                   decoration: BoxDecoration(color: Colors.black, border: Border.all(color: _yellow, width: 1.5), borderRadius: BorderRadius.circular(4)),
                   child: Stack(children: [
-                    _CameraStream(cameraNumber: pn, isThumbnail: false),
+                    _CameraStream(cameraNumber: pn),
                     Positioned(top: 6, left: 6, child: Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(2)), child: const Text('PROGRAM', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1.5)))),
                     if (_overlays.isNotEmpty) Positioned.fill(child: OverlayRenderer(overlays: _overlays)),
                     
@@ -1549,6 +1893,7 @@ jobs:
                     _mi(Icons.add, 'Add Camera', () { setState(() => _menuOpen = false); _add(); }),
                     _mi(Icons.layers, 'Graphics', _openG, teal: true),
                     _mi(Icons.link, 'Link Accounts', _openA),
+                    _mi(Icons.movie, 'Studio Canvas (Video + Cam)', _openStudioCanvas, teal: true),
                     _mi(Icons.power_settings_new, '24/7 Broadcast', _startAutomatedBroadcast, teal: true),
                   ])));
             }
