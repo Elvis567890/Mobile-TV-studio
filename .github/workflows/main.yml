@@ -1614,104 +1614,79 @@ jobs:
             }
 
             Future<void> _startAutomatedBroadcast() async {
-              final videoCtrl = TextEditingController(text: "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4\nhttps://test-videos.co.uk/vids/sintel/mp4/h264/720/Sintel_720_10s_1MB.mp4");
+              final scheduleCtrl = TextEditingController(text: "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4 | 1\nhttps://test-videos.co.uk/vids/sintel/mp4/h264/720/Sintel_720_10s_1MB.mp4 | 1");
               final rtmpCtrl = TextEditingController(text: "rtmp://a.rtmp.youtube.com/live2/YOUR_YOUTUBE_KEY");
-              final logoCtrl = TextEditingController(text: "https://upload.wikimedia.org/wikipedia/commons/2/20/YouTube_2024.svg");
-              final bannerCtrl = TextEditingController(text: "https://dummyimage.com/300x80/ff0000/ffffff.png&text=BUY+NOW");
-              
-              String logoPos = 'Top Right';
-              String bannerPos = 'Bottom Left';
 
               final result = await showDialog<bool>(
                 context: context,
-                builder: (ctx) => StatefulBuilder(
-                  builder: (context, setDialogState) {
-                    return AlertDialog(
-                      backgroundColor: _panel,
-                      title: const Text('24/7 Broadcast + Ads', style: TextStyle(color: Colors.white, fontSize: 16)),
-                      content: SingleChildScrollView(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Text('Video URLs (One per line):', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                            TextField(
-                              controller: videoCtrl,
-                              maxLines: 3,
-                              style: const TextStyle(color: Colors.white, fontSize: 12),
-                              decoration: const InputDecoration(hintStyle: TextStyle(color: Colors.white24)),
-                            ),
-                            const SizedBox(height: 12),
-                            const Text('RTMP URLs (One per line):', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                            TextField(
-                              controller: rtmpCtrl,
-                              maxLines: 3,
-                              style: const TextStyle(color: Colors.white, fontSize: 12),
-                              decoration: const InputDecoration(hintStyle: TextStyle(color: Colors.white24)),
-                            ),
-                            const SizedBox(height: 12),
-                            const Text('TV Logo URL (PNG):', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                            TextField(
-                              controller: logoCtrl,
-                              style: const TextStyle(color: Colors.white, fontSize: 12),
-                            ),
-                            DropdownButton<String>(
-                              value: logoPos,
-                              dropdownColor: _panel,
-                              style: const TextStyle(color: Colors.white, fontSize: 12),
-                              items: ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
-                              onChanged: (val) { if (val != null) setDialogState(() => logoPos = val); },
-                            ),
-                            const SizedBox(height: 12),
-                            const Text('Advert Banner URL (PNG):', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                            TextField(
-                              controller: bannerCtrl,
-                              style: const TextStyle(color: Colors.white, fontSize: 12),
-                            ),
-                            DropdownButton<String>(
-                              value: bannerPos,
-                              dropdownColor: _panel,
-                              style: const TextStyle(color: Colors.white, fontSize: 12),
-                              items: ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
-                              onChanged: (val) { if (val != null) setDialogState(() => bannerPos = val); },
-                            ),
-                          ],
+                builder: (ctx) => AlertDialog(
+                  backgroundColor: _panel,
+                  title: const Text('TV Schedule (24/7)', style: TextStyle(color: Colors.white, fontSize: 16)),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('Format: Video URL | Duration (mins)', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                        TextField(
+                          controller: scheduleCtrl,
+                          maxLines: 5,
+                          style: const TextStyle(color: Colors.white, fontSize: 12),
+                          decoration: const InputDecoration(
+                            hintText: 'Paste links here...\nExample:\nmovie.mp4 | 30\nad.mp4 | 1',
+                            hintStyle: TextStyle(color: Colors.white24),
+                          ),
                         ),
-                      ),
-                      actions: [
-                        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')),
-                        FilledButton(
-                          onPressed: () => Navigator.pop(ctx, true),
-                          child: const Text('START BROADCAST')
+                        const SizedBox(height: 12),
+                        const Text('RTMP URLs (One per line):', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                        TextField(
+                          controller: rtmpCtrl,
+                          maxLines: 3,
+                          style: const TextStyle(color: Colors.white, fontSize: 12),
+                          decoration: const InputDecoration(hintStyle: TextStyle(color: Colors.white24)),
                         ),
                       ],
-                    );
-                  }
+                    ),
+                  ),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')),
+                    FilledButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: const Text('START SCHEDULE')
+                    ),
+                  ],
                 ),
               );
 
               if (result == true) {
-                final videos = videoCtrl.text.split('\n').where((u) => u.trim().isNotEmpty).toList();
+                final rawLines = scheduleCtrl.text.split('\n').where((u) => u.trim().isNotEmpty).toList();
                 final platforms = rtmpCtrl.text.split('\n').where((u) => u.trim().isNotEmpty).toList();
                 
-                if (videos.isEmpty || platforms.isEmpty) return;
+                if (rawLines.isEmpty || platforms.isEmpty) return;
+
+                final List<Map<String, dynamic>> scheduleJson = [];
+                for (final line in rawLines) {
+                  final parts = line.split('|');
+                  if (parts.length == 2) {
+                    scheduleJson.add({
+                      'url': parts[0].trim(),
+                      'duration': int.tryParse(parts[1].trim()) ?? 30, // Default 30 mins if invalid
+                    });
+                  }
+                }
 
                 try {
                   final response = await http.post(
-                    Uri.parse('http://$_serverIp:3000/start-broadcast'),
+                    Uri.parse('http://$_serverIp:3000/start-schedule'),
                     headers: {'Content-Type': 'application/json'},
                     body: jsonEncode({
-                      'videos': videos, 
+                      'schedule': scheduleJson, 
                       'platforms': platforms,
-                      'logoUrl': logoCtrl.text.trim(),
-                      'logoPosition': logoPos,
-                      'bannerUrl': bannerCtrl.text.trim(),
-                      'bannerPosition': bannerPos,
                     }),
                   );
                   
                   if (response.statusCode == 200 && mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Broadcast started with Ads!')),
+                      const SnackBar(content: Text('Schedule started!')),
                     );
                   }
                 } catch (e) {
@@ -1903,7 +1878,7 @@ jobs:
                     _mi(Icons.layers, 'Graphics', _openG, teal: true),
                     _mi(Icons.link, 'Link Accounts', _openA),
                     _mi(Icons.movie, 'Studio Canvas (Video + Cam)', _openStudioCanvas, teal: true),
-                    _mi(Icons.power_settings_new, '24/7 Broadcast', _startAutomatedBroadcast, teal: true),
+                    _mi(Icons.power_settings_new, '24/7 Schedule', _startAutomatedBroadcast, teal: true),
                   ])));
             }
             Widget _mi(IconData icon, String label, VoidCallback onTap, {bool teal = false}) {
