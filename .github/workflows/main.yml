@@ -53,7 +53,7 @@ jobs:
             shared_preferences: ^2.3.2
             uuid: ^4.5.0
             flutter_webrtc: ^0.12.5
-            rtmp_broadcaster: ^2.3.4
+            rtmp_broadcaster: ^3.1.1
             rtmpstreamer: ^0.2.3
             mic_info: ^0.0.5
             permission_handler: ^11.3.1
@@ -238,7 +238,7 @@ jobs:
 
           # ─── lib/services/streaming_service.dart ───
           cat > lib/services/streaming_service.dart << 'D'
-          import 'package:rtmp_broadcaster/camera.dart';
+          import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
           import 'package:mic_info/mic_info.dart';
 
           class StreamingService {
@@ -264,7 +264,7 @@ jobs:
               );
               _controller = CameraController(
                 cam,
-                ResolutionPreset.medium, // OPTIMIZED FOR OLD ANDROIDS
+                ResolutionPreset.medium,
                 enableAudio: true,
               );
               await _controller!.initialize();
@@ -283,7 +283,7 @@ jobs:
             static Future<void> startStream({
               required String rtmpUrl,
               required String streamKey,
-              int bitrate = 1500 * 1024, // REDUCED BITRATE FOR STABILITY
+              int bitrate = 1500 * 1024,
             }) async {
               if (_controller == null) return;
               final url = '$rtmpUrl/$streamKey';
@@ -300,7 +300,7 @@ jobs:
               final url = 'rtmp://13.140.90.83:1935/$path';
               await _controller!.startVideoStreaming(
                 url,
-                bitrate: 1500 * 1024, // REDUCED BITRATE
+                bitrate: 1500 * 1024,
                 androidUseOpenGL: false,
               );
               _isStreaming = true;
@@ -339,7 +339,7 @@ jobs:
               await _controller?.dispose();
               _controller = CameraController(
                 cam,
-                ResolutionPreset.medium, // OPTIMIZED
+                ResolutionPreset.medium,
                 enableAudio: !_isMicMuted,
               );
               await _controller!.initialize();
@@ -351,7 +351,7 @@ jobs:
               await _controller!.dispose();
               _controller = CameraController(
                 cam,
-                ResolutionPreset.medium, // OPTIMIZED
+                ResolutionPreset.medium,
                 enableAudio: !muted,
               );
               await _controller!.initialize();
@@ -418,7 +418,7 @@ jobs:
 
           # ─── lib/widgets/live_camera.dart ───
           cat > lib/widgets/live_camera.dart << 'D'
-          import 'package:rtmp_broadcaster/camera.dart';
+          import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
           import 'package:flutter/material.dart';
           class LiveCamera extends StatefulWidget {
             final bool front;
@@ -441,7 +441,7 @@ jobs:
                 final cam = cams.firstWhere((c) => c.lensDirection == lens,
                     orElse: () => cams.first);
                 _ctrl = CameraController(cam, ResolutionPreset.low,
-                    enableAudio: false); // LOW RES & NO AUDIO FOR PREVIEW
+                    enableAudio: false);
                 await _ctrl!.initialize();
                 if (mounted) setState(() => _ready = true);
               } catch (e) {
@@ -550,7 +550,7 @@ jobs:
           # ─── lib/screens/camera_screen.dart ───
           cat > lib/screens/camera_screen.dart << 'D'
           import 'package:flutter/material.dart';
-          import 'package:rtmp_broadcaster/camera.dart';
+          import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
           import '../services/streaming_service.dart';
 
           class CameraScreen extends StatefulWidget {
@@ -1204,15 +1204,13 @@ jobs:
             final TextEditingController _centerTextController = TextEditingController(text: "BREAKING NEWS");
             final TextEditingController _tickerController = TextEditingController(text: "WELCOME TO ABRIMAX TV • LIVE 24/7 • ");
             
-            // Center Text Controls
             double _centerTextSize = 48.0;
             Color _centerTextColor = Colors.white;
 
-            // Ticker Controls
             double _tickerTextSize = 16.0;
             Color _tickerTextColor = Colors.white;
             Color _tickerBgColor = Colors.redAccent;
-            double _tickerSpeed = 10.0; // seconds to cross screen
+            double _tickerSpeed = 10.0;
 
             Offset _camPosition = const Offset(50, 50);
             double _camWidth = 320;
@@ -1320,7 +1318,6 @@ jobs:
                           else
                             const Center(child: Text('Click "Load Video" to start', style: TextStyle(color: Colors.white54))),
 
-                          // Center Big Text
                           Center(
                             child: Text(
                               _centerTextController.text,
@@ -1328,7 +1325,6 @@ jobs:
                             ),
                           ),
 
-                          // Camera Overlay
                           if (_showCamera)
                             Positioned(
                               left: _camPosition.dx,
@@ -1356,7 +1352,6 @@ jobs:
                               ),
                             ),
 
-                          // Scrolling Ticker
                           Positioned(
                             bottom: 0, left: 0, right: 0,
                             child: Container(
@@ -1399,13 +1394,12 @@ jobs:
                     if (!_isStreaming && _countdown == 0)
                       SafeArea(
                         child: Container(
-                          height: 200, // Increased height for text controls
+                          height: 200,
                           color: const Color(0xFF141418),
                           child: SingleChildScrollView(
                             padding: const EdgeInsets.all(8),
                             child: Column(
                               children: [
-                                // Center Text Controls
                                 Row(
                                   children: [
                                     const Text('Center Text:', style: TextStyle(color: Colors.white70, fontSize: 12)),
@@ -1438,7 +1432,6 @@ jobs:
                                   ],
                                 ),
                                 const SizedBox(height: 8),
-                                // Ticker Controls
                                 Row(
                                   children: [
                                     const Text('Ticker:', style: TextStyle(color: Colors.white70, fontSize: 12)),
@@ -1476,7 +1469,6 @@ jobs:
                                   ],
                                 ),
                                 const SizedBox(height: 8),
-                                // Ticker Background and Camera toggle
                                 Row(
                                   children: [
                                     const Text('Ticker BG:', style: TextStyle(color: Colors.white70, fontSize: 12)),
@@ -1745,32 +1737,34 @@ jobs:
             }
 
             Future<void> _startAutomatedBroadcast() async {
-              final scheduleCtrl = TextEditingController(text: "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4 | 1\nhttps://test-videos.co.uk/vids/sintel/mp4/h264/720/Sintel_720_10s_1MB.mp4 | 1");
+              final scheduleCtrl = TextEditingController();
               final rtmpCtrl = TextEditingController(text: "rtmp://a.rtmp.youtube.com/live2/YOUR_YOUTUBE_KEY");
               
-              // RESTORED LOGO AND BANNER INPUTS
               final logoCtrl = TextEditingController(text: "https://upload.wikimedia.org/wikipedia/commons/2/20/YouTube_2024.svg");
               final bannerCtrl = TextEditingController(text: "https://dummyimage.com/300x80/ff0000/ffffff.png&text=BUY+NOW");
               String logoPos = 'Top Right';
               String bannerPos = 'Bottom Left';
 
-              final result = await showDialog<bool>(
+              final result = await showDialog<String>(
                 context: context,
                 builder: (ctx) => StatefulBuilder(
                   builder: (context, setDialogState) {
                     return AlertDialog(
                       backgroundColor: _panel,
-                      title: const Text('24/7 Schedule + Ads', style: TextStyle(color: Colors.white, fontSize: 16)),
+                      title: const Text('Add to TV Schedule', style: TextStyle(color: Colors.white, fontSize: 16)),
                       content: SingleChildScrollView(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Text('Format: Video URL | Duration (mins)', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            const Text('Video URLs (One per line):', style: TextStyle(color: Colors.white70, fontSize: 12)),
                             TextField(
                               controller: scheduleCtrl,
-                              maxLines: 3,
+                              maxLines: 5,
                               style: const TextStyle(color: Colors.white, fontSize: 12),
-                              decoration: const InputDecoration(hintStyle: TextStyle(color: Colors.white24)),
+                              decoration: const InputDecoration(
+                                hintText: 'https://link.com/video.mp4\nhttps://youtube.com/watch?v=...',
+                                hintStyle: TextStyle(color: Colors.white24),
+                              ),
                             ),
                             const SizedBox(height: 12),
                             const Text('RTMP URLs (One per line):', style: TextStyle(color: Colors.white70, fontSize: 12)),
@@ -1782,10 +1776,7 @@ jobs:
                             ),
                             const SizedBox(height: 12),
                             const Text('TV Logo URL (PNG):', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                            TextField(
-                              controller: logoCtrl,
-                              style: const TextStyle(color: Colors.white, fontSize: 12),
-                            ),
+                            TextField(controller: logoCtrl, style: const TextStyle(color: Colors.white, fontSize: 12)),
                             DropdownButton<String>(
                               value: logoPos,
                               dropdownColor: _panel,
@@ -1795,10 +1786,7 @@ jobs:
                             ),
                             const SizedBox(height: 12),
                             const Text('Advert Banner URL (PNG):', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                            TextField(
-                              controller: bannerCtrl,
-                              style: const TextStyle(color: Colors.white, fontSize: 12),
-                            ),
+                            TextField(controller: bannerCtrl, style: const TextStyle(color: Colors.white, fontSize: 12)),
                             DropdownButton<String>(
                               value: bannerPos,
                               dropdownColor: _panel,
@@ -1810,10 +1798,19 @@ jobs:
                         ),
                       ),
                       actions: [
-                        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')),
+                        TextButton(
+                          onPressed: () async {
+                            try {
+                              await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule'));
+                              if (ctx.mounted) Navigator.pop(ctx);
+                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Broadcast Stopped.')));
+                            } catch (e) {}
+                          },
+                          child: const Text('STOP LIVE', style: TextStyle(color: Colors.red)),
+                        ),
                         FilledButton(
-                          onPressed: () => Navigator.pop(ctx, true),
-                          child: const Text('START SCHEDULE')
+                          onPressed: () => Navigator.pop(ctx, 'ADD'),
+                          child: const Text('ADD TO QUEUE')
                         ),
                       ],
                     );
@@ -1821,7 +1818,7 @@ jobs:
                 ),
               );
 
-              if (result == true) {
+              if (result == 'ADD') {
                 final rawLines = scheduleCtrl.text.split('\n').where((u) => u.trim().isNotEmpty).toList();
                 final platforms = rtmpCtrl.text.split('\n').where((u) => u.trim().isNotEmpty).toList();
                 
@@ -1829,13 +1826,10 @@ jobs:
 
                 final List<Map<String, dynamic>> scheduleJson = [];
                 for (final line in rawLines) {
-                  final parts = line.split('|');
-                  if (parts.length == 2) {
-                    scheduleJson.add({
-                      'url': parts[0].trim(),
-                      'duration': int.tryParse(parts[1].trim()) ?? 30,
-                    });
-                  }
+                  scheduleJson.add({
+                    'url': line.trim(),
+                    'duration': 0,
+                  });
                 }
 
                 try {
@@ -1853,9 +1847,8 @@ jobs:
                   );
                   
                   if (response.statusCode == 200 && mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Schedule started!')),
-                    );
+                    final msg = jsonDecode(response.body)['message'];
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
                   }
                 } catch (e) {
                   if (mounted) {
@@ -2046,7 +2039,7 @@ jobs:
                     _mi(Icons.layers, 'Graphics', _openG, teal: true),
                     _mi(Icons.link, 'Link Accounts', _openA),
                     _mi(Icons.movie, 'Studio Canvas (Video + Cam)', _openStudioCanvas, teal: true),
-                    _mi(Icons.power_settings_new, '24/7 Schedule', _startAutomatedBroadcast, teal: true),
+                    _mi(Icons.power_settings_new, 'Add to TV Schedule', _startAutomatedBroadcast, teal: true),
                   ])));
             }
             Widget _mi(IconData icon, String label, VoidCallback onTap, {bool teal = false}) {
@@ -2183,7 +2176,7 @@ jobs:
           tasks.register("clean", Delete) { delete rootProject.buildDir }
           E
 
-          # FIX: Exclude the older rtmp-rtsp-stream-client-java library
+          # FIX: Force compatible RootEncoder version for rtmp_broadcaster 3.1.1 and rtmpstreamer 0.2.3
           cat > android/app/build.gradle << 'E'
           plugins {
               id "com.android.application"
@@ -2192,7 +2185,12 @@ jobs:
           }
 
           configurations.all {
-              exclude group: 'com.github.pedroSG94.rtmp-rtsp-stream-client-java'
+              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:library:2.6.7'
+              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:rtplibrary:2.6.7'
+              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:encoder:2.6.7'
+              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:rtsp:2.6.7'
+              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:rtmp:2.6.7'
+              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:common:2.6.7'
           }
 
           android {
