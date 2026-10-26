@@ -293,9 +293,9 @@ jobs:
               _isStreaming = true;
             }
 
-            static Future<void> startStreamToServer(String path) async {
+            static Future<void> startStreamToServer(String path, String serverIp) async {
               if (_controller == null) return;
-              final url = 'rtmp://13.140.90.83:1935/$path';
+              final url = 'rtmp://$serverIp:1935/$path';
               await _controller!.startVideoStreaming(
                 url,
                 bitrate: 1500 * 1024,
@@ -640,7 +640,8 @@ jobs:
               setState(() => _status = 'CONNECTING...');
               
               try {
-                await StreamingService.startStreamToServer(camPath);
+                // Use default server IP for camera nodes
+                await StreamingService.startStreamToServer(camPath, "13.140.90.83");
                 if (mounted) setState(() { _live = true; _status = 'LIVE ON CAM $camResult'; });
               } catch (e) {
                 if (mounted) setState(() => _status = 'ERROR');
@@ -1607,7 +1608,6 @@ jobs:
           const _yellow = Color(0xFFF5C542);
           const _blue = Color(0xFF3B82F6);
           const _grey = Color(0x14FFFFFF);
-          const _serverIp = "13.140.90.83";
 
           class DirectorScreen extends StatefulWidget {
             const DirectorScreen({super.key});
@@ -1627,6 +1627,9 @@ jobs:
             final List<bool> _prev = List.generate(15, (i) => i == 1);
             final _overlayStore = OverlayStore();
             List<OverlayItem> _overlays = [];
+            
+            // Configurable Server IP
+            String _serverIp = "13.140.90.83"; 
 
             @override
             void initState() {
@@ -1732,6 +1735,32 @@ jobs:
             void _openStudioCanvas() {
               setState(() => _menuOpen = false);
               Navigator.push(context, MaterialPageRoute(builder: (_) => const StudioCanvasScreen()));
+            }
+
+            Future<void> _editServer() async {
+              final ctrl = TextEditingController(text: _serverIp);
+              final res = await showDialog<String>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  backgroundColor: _panel,
+                  title: const Text('Server IP Address', style: TextStyle(color: Colors.white)),
+                  content: TextField(
+                    controller: ctrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      hintText: 'e.g. 192.168.1.100',
+                      hintStyle: TextStyle(color: Colors.white24),
+                    ),
+                  ),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('CANCEL')),
+                    FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('SAVE')),
+                  ],
+                ),
+              );
+              if (res != null && res.isNotEmpty) {
+                setState(() => _serverIp = res.trim());
+              }
             }
 
             Future<void> _startAutomatedBroadcast() async {
@@ -1850,7 +1879,7 @@ jobs:
                   }
                 } catch (e) {
                   if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to connect to server: $e')));
                   }
                 }
               }
@@ -1916,7 +1945,7 @@ jobs:
                   child: Container(
                     decoration: BoxDecoration(color: Colors.black, border: Border.all(color: bc, width: (l || p) ? 2.0 : 1.0), borderRadius: BorderRadius.circular(3)),
                     child: Stack(children: [
-                      _CameraStream(cameraNumber: i + 1),
+                      _CameraStream(cameraNumber: i + 1, serverIp: _serverIp),
                       Positioned(top: 3, left: 3, child: Container(width: 5, height: 5, decoration: BoxDecoration(color: dc, shape: BoxShape.circle))),
                       if (l) Positioned(top: 3, right: 3, child: Container(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1), decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(2)), child: const Text('LIVE', style: TextStyle(color: Colors.white, fontSize: 6, fontWeight: FontWeight.w900, letterSpacing: 1)))),
                       Positioned(left: 4, bottom: 3, child: Text('CAM ${i + 1}', style: const TextStyle(color: Colors.white, fontSize: 7, fontWeight: FontWeight.w900, letterSpacing: 1))),
@@ -1957,7 +1986,7 @@ jobs:
                 child: Container(
                   decoration: BoxDecoration(color: Colors.black, border: Border.all(color: _yellow, width: 1.5), borderRadius: BorderRadius.circular(4)),
                   child: Stack(children: [
-                    _CameraStream(cameraNumber: pn),
+                    _CameraStream(cameraNumber: pn, serverIp: _serverIp),
                     Positioned(top: 6, left: 6, child: Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(2)), child: const Text('PROGRAM', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1.5)))),
                     if (_overlays.isNotEmpty) Positioned.fill(child: OverlayRenderer(overlays: _overlays)),
                     
@@ -1966,7 +1995,7 @@ jobs:
                       child: Container(
                         decoration: BoxDecoration(color: Colors.black, border: Border.all(color: _yellow, width: 1.5), borderRadius: BorderRadius.circular(3)),
                         child: Stack(children: [
-                          _CameraStream(cameraNumber: pn),
+                          _CameraStream(cameraNumber: pn, serverIp: _serverIp),
                           Positioned(top: 3, left: 3, child: Container(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1), decoration: BoxDecoration(color: _yellow, borderRadius: BorderRadius.circular(2)), child: const Text('PREVIEW', style: TextStyle(color: Colors.black, fontSize: 6, fontWeight: FontWeight.w900, letterSpacing: 1)))),
                         ]))),
                   ])));
@@ -1988,7 +2017,7 @@ jobs:
                       child: Container(
                         decoration: BoxDecoration(color: Colors.black, border: Border.all(color: bc, width: 1.5), borderRadius: BorderRadius.circular(3)),
                         child: Stack(children: [
-                           _CameraStream(cameraNumber: i + 1),
+                           _CameraStream(cameraNumber: i + 1, serverIp: _serverIp),
                            Positioned(bottom: 4, left: 4, child: Text('CAM ${i + 1}', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 2))),
                         ])));
                   }));
@@ -2032,6 +2061,7 @@ jobs:
                         const Spacer(),
                         GestureDetector(onTap: () => setState(() => _menuOpen = false), child: const Icon(Icons.close, color: Colors.white, size: 16)),
                       ])),
+                    _mi(Icons.dns, 'Server IP ($_serverIp)', _editServer),
                     _mi(Icons.grid_view, 'Camera Count', () { setState(() => _menuOpen = false); _pick(); }),
                     _mi(Icons.add, 'Add Camera', () { setState(() => _menuOpen = false); _add(); }),
                     _mi(Icons.layers, 'Graphics', _openG, teal: true),
@@ -2048,16 +2078,16 @@ jobs:
                     child: Row(children: [
                       Icon(icon, color: teal ? Colors.tealAccent : Colors.white70, size: 16),
                       const SizedBox(width: 10),
-                      Text(label, style: TextStyle(color: teal ? Colors.tealAccent : Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
+                      Expanded(child: Text(label, style: TextStyle(color: teal ? Colors.tealAccent : Colors.white, fontSize: 11, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis)),
                     ]))));
             }
           }
 
           class _CameraStream extends StatefulWidget {
             final int cameraNumber;
-            final bool isThumbnail;
+            final String serverIp;
             
-            const _CameraStream({required this.cameraNumber, this.isThumbnail = true});
+            const _CameraStream({required this.cameraNumber, required this.serverIp});
 
             @override
             State<_CameraStream> createState() => _CameraStreamState();
@@ -2074,7 +2104,7 @@ jobs:
             }
 
             Future<void> _initPlayer() async {
-              final url = Uri.parse("http://$_serverIp:8888/cam${widget.cameraNumber}/index.m3u8");
+              final url = Uri.parse("http://${widget.serverIp}:8888/cam${widget.cameraNumber}/index.m3u8");
               _controller = VideoPlayerController.networkUrl(url);
               try {
                 await _controller!.initialize();
@@ -2144,7 +2174,6 @@ jobs:
           plugins {
               id "dev.flutter.flutter-plugin-loader" version "1.0.0"
               id "com.android.application" version "8.6.0" apply false
-              # ---> THE MAGIC FIX: Upgraded Kotlin to 2.3.21 to read rtmp_broadcaster 3.1.1 <---
               id "org.jetbrains.kotlin.android" version "2.3.21" apply false
           }
           include ":app"
