@@ -53,7 +53,7 @@ jobs:
             shared_preferences: ^2.3.2
             uuid: ^4.5.0
             flutter_webrtc: ^0.12.5
-            rtmp_broadcaster: ^2.3.4
+            rtmp_broadcaster: ^3.1.1
             rtmpstreamer: ^0.2.3
             mic_info: ^0.0.5
             permission_handler: ^11.3.1
@@ -236,7 +236,7 @@ jobs:
 
           # ─── lib/services/streaming_service.dart ───
           cat > lib/services/streaming_service.dart << 'D'
-          import 'package:rtmp_broadcaster/camera.dart'; // FIXED: import for v2.3.4
+          import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
           import 'package:mic_info/mic_info.dart';
 
           class StreamingService {
@@ -416,7 +416,7 @@ jobs:
 
           # ─── lib/widgets/live_camera.dart ───
           cat > lib/widgets/live_camera.dart << 'D'
-          import 'package:rtmp_broadcaster/camera.dart'; // FIXED: import for v2.3.4
+          import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
           import 'package:flutter/material.dart';
           class LiveCamera extends StatefulWidget {
             final bool front;
@@ -548,7 +548,7 @@ jobs:
           # ─── lib/screens/camera_screen.dart ───
           cat > lib/screens/camera_screen.dart << 'D'
           import 'package:flutter/material.dart';
-          import 'package:rtmp_broadcaster/camera.dart'; // FIXED: import for v2.3.4
+          import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
           import '../services/streaming_service.dart';
 
           class CameraScreen extends StatefulWidget {
@@ -2144,7 +2144,8 @@ jobs:
           plugins {
               id "dev.flutter.flutter-plugin-loader" version "1.0.0"
               id "com.android.application" version "8.6.0" apply false
-              id "org.jetbrains.kotlin.android" version "2.0.0" apply false
+              # ---> THE MAGIC FIX: Upgraded Kotlin to 2.3.21 to read rtmp_broadcaster 3.1.1 <---
+              id "org.jetbrains.kotlin.android" version "2.3.21" apply false
           }
           include ":app"
           E
@@ -2275,6 +2276,7 @@ jobs:
       - name: Build APK
         run: |
           rm -f pubspec.lock
+          flutter clean
           flutter pub get
           dart run flutter_launcher_icons
           dart run flutter_native_splash:create
