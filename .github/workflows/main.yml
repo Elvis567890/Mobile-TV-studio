@@ -54,6 +54,7 @@ jobs:
             uuid: ^4.5.0
             flutter_webrtc: ^0.12.5
             rtmp_broadcaster: ^2.3.4
+            rtmpstreamer: ^0.2.3
             mic_info: ^0.0.5
             permission_handler: ^11.3.1
             wakelock_plus: ^1.2.8
@@ -1150,8 +1151,9 @@ jobs:
           cat > lib/screens/studio_canvas_screen.dart << 'D'
           import 'dart:async';
           import 'package:flutter/material.dart';
+          import 'package:flutter/services.dart'; // ADDED TO HIDE SYSTEM BARS
           import 'package:video_player/video_player.dart';
-          import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
+          import 'package:rtmpstreamer/rtmpstreamer.dart'; 
           import 'package:wakelock_plus/wakelock_plus.dart';
           import '../widgets/live_camera.dart';
 
@@ -1163,7 +1165,6 @@ jobs:
 
           class _StudioCanvasScreenState extends State<StudioCanvasScreen> {
             VideoPlayerController? _videoController;
-            final ScreenStream _screenStream = ScreenStream();
             bool _isStreaming = false;
             bool _showCamera = true;
             int _countdown = 0;
@@ -1179,11 +1180,12 @@ jobs:
             @override
             void dispose() {
               _videoController?.dispose();
-              _screenStream.dispose();
               _keyController.dispose();
               _tickerController.dispose();
               _countdownTimer?.cancel();
               WakelockPlus.disable();
+              // Restore system UI when leaving the screen
+              SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: SystemUiOverlay.values);
               super.dispose();
             }
 
@@ -1214,12 +1216,14 @@ jobs:
 
             Future<void> _toggleStream() async {
               if (_isStreaming) {
-                await _screenStream.stopStream();
+                await RtmpStreamer.stopStream();
                 setState(() {
                   _isStreaming = false;
                   _countdown = 0;
                 });
                 WakelockPlus.disable();
+                // Restore the phone's system bars
+                SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: SystemUiOverlay.values);
               } else {
                 if (_keyController.text.trim().isEmpty) return;
                 
@@ -1234,8 +1238,23 @@ jobs:
                     
                     // Actually Start Stream
                     final rtmpUrl = 'rtmp://a.rtmp.youtube.com/live2/${_keyController.text.trim()}';
-                    await _screenStream.startStream(rtmpUrl, bitrate: 2000 * 1024);
+                    
+                    await RtmpStreamer.updateStreamSettings(
+                      const RtmpStreamSettings(
+                        width: 1280,
+                        height: 720,
+                        fps: 30,
+                        bitrate: 2000000,
+                        orientation: RtmpOrientation.landscape,
+                      ),
+                    );
+
+                    await RtmpStreamer.startStream(rtmpUrl);
                     await WakelockPlus.enable();
+                    
+                    // HIDE THE STATUS BAR AND NAVIGATION BUTTONS
+                    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+                    
                     setState(() => _isStreaming = true);
                   }
                 });
@@ -1246,93 +1265,96 @@ jobs:
             Widget build(BuildContext context) {
               return Scaffold(
                 backgroundColor: Colors.black,
-                body: SafeArea(
-                  child: Column(
-                    children: [
-                      // THE BROADCAST CANVAS
-                      Expanded(
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            // 1. Background Video
-                            if (_videoController != null && _videoController!.value.isInitialized)
-                              FittedBox(
-                                fit: BoxFit.cover,
-                                child: SizedBox(
-                                  width: _videoController!.value.size.width,
-                                  height: _videoController!.value.size.height,
-                                  child: VideoPlayer(_videoController!),
-                                ),
-                              )
-                            else
-                              const Center(child: Text('Click "Load Video" to start', style: TextStyle(color: Colors.white54))),
+                // Removed SafeArea here so the video fills the entire screen when live
+                body: Column(
+                  children: [
+                    // THE BROADCAST CANVAS
+                    Expanded(
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          // 1. Background Video
+                          if (_videoController != null && _videoController!.value.isInitialized)
+                            FittedBox(
+                              fit: BoxFit.cover,
+                              child: SizedBox(
+                                width: _videoController!.value.size.width,
+                                height: _videoController!.value.size.height,
+                                child: VideoPlayer(_videoController!),
+                              ),
+                            )
+                          else
+                            const Center(child: Text('Click "Load Video" to start', style: TextStyle(color: Colors.white54))),
 
-                            // 2. Camera Overlay (Only shows if _showCamera is true)
-                            if (_showCamera)
-                              Positioned(
-                                left: _camPosition.dx,
-                                top: _camPosition.dy,
-                                child: GestureDetector(
-                                  onPanUpdate: (details) {
-                                    if (!_isStreaming) {
-                                      setState(() {
-                                        _camPosition += details.delta;
-                                      });
-                                    }
-                                  },
-                                  child: Container(
-                                    width: _camWidth,
-                                    height: _camHeight,
-                                    decoration: BoxDecoration(
-                                      border: Border.all(color: _isStreaming ? Colors.transparent : Colors.yellow, width: 2),
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(6),
-                                      child: const LiveCamera(front: false),
-                                    ),
+                          // 2. Camera Overlay (Only shows if _showCamera is true)
+                          if (_showCamera)
+                            Positioned(
+                              left: _camPosition.dx,
+                              top: _camPosition.dy,
+                              child: GestureDetector(
+                                onPanUpdate: (details) {
+                                  if (!_isStreaming) {
+                                    setState(() {
+                                      _camPosition += details.delta;
+                                    });
+                                  }
+                                },
+                                child: Container(
+                                  width: _camWidth,
+                                  height: _camHeight,
+                                  decoration: BoxDecoration(
+                                    // YELLOW BORDER DISAPPEARS WHEN LIVE
+                                    border: Border.all(color: _isStreaming ? Colors.transparent : Colors.yellow, width: 2),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: const LiveCamera(front: false),
                                   ),
                                 ),
                               ),
-
-                            // 3. Scrolling Ticker (Floating Words)
-                            Positioned(
-                              bottom: 0, left: 0, right: 0,
-                              child: Container(
-                                color: Colors.redAccent,
-                                padding: const EdgeInsets.symmetric(vertical: 8),
-                                child: _Ticker(text: _tickerController.text),
-                              ),
                             ),
 
-                            // 4. LIVE Badge & Countdown
+                          // 3. Scrolling Ticker (Floating Words)
+                          Positioned(
+                            bottom: 0, left: 0, right: 0,
+                            child: Container(
+                              color: Colors.redAccent,
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              child: _Ticker(text: _tickerController.text),
+                            ),
+                          ),
+
+                          // 4. LIVE Badge & Countdown
+                          if (!_isStreaming)
                             Positioned(
                               top: 20, left: 20,
                               child: Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                 decoration: BoxDecoration(
-                                  color: _isStreaming ? Colors.red : Colors.grey,
+                                  color: Colors.grey,
                                   borderRadius: BorderRadius.circular(4)
                                 ),
-                                child: Text(_isStreaming ? 'LIVE' : 'PREVIEW', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                child: const Text('PREVIEW', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                               ),
                             ),
-                            
-                            if (_countdown > 0)
-                              Center(
-                                child: Container(
-                                  padding: const EdgeInsets.all(40),
-                                  decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), shape: BoxShape.circle),
-                                  child: Text('$_countdown', style: const TextStyle(color: Colors.white, fontSize: 80, fontWeight: FontWeight.bold)),
-                                ),
-                              )
-                          ],
-                        ),
+                          
+                          if (_countdown > 0)
+                            Center(
+                              child: Container(
+                                padding: const EdgeInsets.all(40),
+                                decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), shape: BoxShape.circle),
+                                child: Text('$_countdown', style: const TextStyle(color: Colors.white, fontSize: 80, fontWeight: FontWeight.bold)),
+                              ),
+                            )
+                        ],
                       ),
-                      
-                      // Control Panel (Hidden when streaming)
-                      if (!_isStreaming && _countdown == 0)
-                        Container(
+                    ),
+                    
+                    // Control Panel (Hidden when streaming)
+                    if (!_isStreaming && _countdown == 0)
+                      SafeArea(
+                        child: Container(
                           padding: const EdgeInsets.all(12),
                           color: const Color(0xFF141418),
                           child: Column(
@@ -1392,8 +1414,8 @@ jobs:
                             ],
                           ),
                         ),
-                    ],
-                  ),
+                      ),
+                  ],
                 ),
               );
             }
@@ -2006,12 +2028,13 @@ jobs:
           include ":app"
           E
 
+          # ADDED JITPACK REPOSITORY FOR rtmpstreamer
           cat > android/build.gradle << 'E'
           allprojects {
               repositories {
                   google()
                   mavenCentral()
-                  maven { url 'https://jitpack.io' }
+                  maven { url 'https://jitpack.io' } // REQUIRED FOR RTMPSTREAMER
               }
           }
           rootProject.buildDir = "../build"
