@@ -2040,7 +2040,7 @@ jobs:
           tasks.register("clean", Delete) { delete rootProject.buildDir }
           E
 
-          # FIX: Force a single version of the PedroSG94 encoder library to resolve Duplicate class errors
+          # FIX: Exclude the older rtmp-rtsp-stream-client-java library
           cat > android/app/build.gradle << 'E'
           plugins {
               id "com.android.application"
@@ -2049,12 +2049,7 @@ jobs:
           }
 
           configurations.all {
-              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:library:2.6.7'
-              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:rtplibrary:2.6.7'
-              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:encoder:2.6.7'
-              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:rtsp:2.6.7'
-              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:rtmp:2.6.7'
-              resolutionStrategy.force 'com.github.pedroSG94.RootEncoder:common:2.6.7'
+              exclude group: 'com.github.pedroSG94.rtmp-rtsp-stream-client-java'
           }
 
           android {
