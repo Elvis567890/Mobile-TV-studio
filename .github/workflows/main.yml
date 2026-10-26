@@ -9,16 +9,17 @@ jobs:
       - uses: actions/setup-java@v4
         with: {distribution: temurin, java-version: '17'}
 
+      # 1) Upgrade Flutter to a version compatible with AGP 9.1+
       - uses: subosito/flutter-action@v2
-        with: {flutter-version: '3.27.0', channel: stable, cache: true}
+        with: {flutter-version: '3.44.0', channel: stable, cache: true}
 
-      # 1) Generate project scaffolding FIRST
+      # 2) Generate project scaffolding
       - name: Flutter create
         run: |
           rm -rf lib test android build .dart_tool pubspec.lock pubspec.yaml
           flutter create --platforms=android --org com.yourcompany --project-name mobile_tv_studio .
 
-      # 2) Overwrite pubspec + generate launcher icon
+      # 3) Overwrite pubspec + generate launcher icon
       - name: Setup pubspec and icon
         run: |
           mkdir -p lib/screens lib/widgets lib/models lib/services assets/icon
@@ -86,7 +87,7 @@ jobs:
               image: "assets/icon/app_icon.png"
           P
 
-      # 3) Write all Dart sources
+      # 4) Write all Dart sources
       - name: Write Dart files
         run: |
           # ─── lib/main.dart ───
@@ -640,7 +641,6 @@ jobs:
               setState(() => _status = 'CONNECTING...');
               
               try {
-                // Use default server IP for camera nodes
                 await StreamingService.startStreamToServer(camPath, "13.140.90.83");
                 if (mounted) setState(() { _live = true; _status = 'LIVE ON CAM $camResult'; });
               } catch (e) {
@@ -1628,7 +1628,6 @@ jobs:
             final _overlayStore = OverlayStore();
             List<OverlayItem> _overlays = [];
             
-            // Configurable Server IP
             String _serverIp = "13.140.90.83"; 
 
             @override
@@ -2146,7 +2145,7 @@ jobs:
           D
 
       # ─────────────────────────────────────────────────────────────
-      # 4) Android Gradle configuration (Aligned with Flutter 3.27.0)
+      # 4) Android Gradle configuration (Aligned with Flutter 3.44.0 & AGP 9.1.1)
       # ─────────────────────────────────────────────────────────────
       - name: Configure Android
         run: |
@@ -2156,7 +2155,7 @@ jobs:
           distributionPath=wrapper/dists
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-8.9-all.zip
+          distributionUrl=https\://services.gradle.org/distributions/gradle-9.5-all.zip
           E
 
           cat > android/settings.gradle << 'E'
@@ -2173,7 +2172,7 @@ jobs:
           }
           plugins {
               id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-              id "com.android.application" version "8.6.0" apply false
+              id "com.android.application" version "9.1.1" apply false
               id "org.jetbrains.kotlin.android" version "2.3.21" apply false
           }
           include ":app"
@@ -2194,8 +2193,8 @@ jobs:
                   if (project.plugins.hasPlugin("com.android.application") ||
                       project.plugins.hasPlugin("com.android.library")) {
                       project.android {
-                          compileSdkVersion 35
-                          buildToolsVersion "34.0.0"
+                          compileSdkVersion 37
+                          buildToolsVersion "37.0.0"
                       }
                   }
               }
@@ -2213,7 +2212,7 @@ jobs:
 
           android {
               namespace "com.yourcompany.mobile_tv_studio"
-              compileSdk 35
+              compileSdk 37
               ndkVersion "26.1.10909125"
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_17
@@ -2223,7 +2222,7 @@ jobs:
               defaultConfig {
                   applicationId "com.yourcompany.mobile_tv_studio"
                   minSdk 24
-                  targetSdk 35
+                  targetSdk 37
                   versionCode 1
                   versionName "1.0"
               }
