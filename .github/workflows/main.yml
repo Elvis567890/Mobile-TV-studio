@@ -236,7 +236,7 @@ jobs:
 
           # ─── lib/services/streaming_service.dart ───
           cat > lib/services/streaming_service.dart << 'D'
-          import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
+          import 'package:rtmp_broadcaster/camera.dart'; // FIXED: import for v2.3.4
           import 'package:mic_info/mic_info.dart';
 
           class StreamingService {
@@ -416,7 +416,7 @@ jobs:
 
           # ─── lib/widgets/live_camera.dart ───
           cat > lib/widgets/live_camera.dart << 'D'
-          import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
+          import 'package:rtmp_broadcaster/camera.dart'; // FIXED: import for v2.3.4
           import 'package:flutter/material.dart';
           class LiveCamera extends StatefulWidget {
             final bool front;
@@ -548,7 +548,7 @@ jobs:
           # ─── lib/screens/camera_screen.dart ───
           cat > lib/screens/camera_screen.dart << 'D'
           import 'package:flutter/material.dart';
-          import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
+          import 'package:rtmp_broadcaster/camera.dart'; // FIXED: import for v2.3.4
           import '../services/streaming_service.dart';
 
           class CameraScreen extends StatefulWidget {
