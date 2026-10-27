@@ -1,5 +1,7 @@
-name: Build
+name: Build Abrimax Studio
+
 on: [push, workflow_dispatch]
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -9,17 +11,14 @@ jobs:
       - uses: actions/setup-java@v4
         with: {distribution: temurin, java-version: '17'}
 
-      # 1) Upgrade Flutter to a version compatible with AGP 9+ and compileSdk 37
       - uses: subosito/flutter-action@v2
         with: {flutter-version: '3.44.0', channel: stable, cache: true}
 
-      # 2) Generate project scaffolding
       - name: Flutter create
         run: |
           rm -rf lib test android build .dart_tool pubspec.lock pubspec.yaml
           flutter create --platforms=android --org com.yourcompany --project-name mobile_tv_studio .
 
-      # 3) Overwrite pubspec + generate launcher icon
       - name: Setup pubspec and icon
         run: |
           mkdir -p lib/screens lib/widgets lib/models lib/services assets/icon
@@ -87,7 +86,6 @@ jobs:
               image: "assets/icon/app_icon.png"
           P
 
-      # 4) Write all Dart sources
       - name: Write Dart files
         run: |
           # ─── lib/main.dart ───
@@ -100,6 +98,8 @@ jobs:
           void main() async {
             WidgetsFlutterBinding.ensureInitialized();
             await SystemChrome.setPreferredOrientations([
+              DeviceOrientation.portraitUp,
+              DeviceOrientation.portraitDown,
               DeviceOrientation.landscapeLeft,
               DeviceOrientation.landscapeRight,
             ]);
@@ -239,6 +239,7 @@ jobs:
           cat > lib/services/streaming_service.dart << 'D'
           import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
           import 'package:mic_info/mic_info.dart';
+          import 'package:flutter/material.dart';
 
           class StreamingService {
             static CameraController? _controller;
@@ -263,10 +264,18 @@ jobs:
               );
               _controller = CameraController(
                 cam,
-                ResolutionPreset.medium,
+                ResolutionPreset.high, 
                 enableAudio: true,
+                imageFormatGroup: ImageFormatGroup.yuv420,
               );
               await _controller!.initialize();
+              
+              try {
+                await _controller!.setZoomLevel(1.0);
+              } catch (e) {
+                debugPrint("Zoom not supported on this device");
+              }
+              
               return _controller;
             }
 
@@ -279,27 +288,14 @@ jobs:
               }
             }
 
-            static Future<void> startStream({
-              required String rtmpUrl,
-              required String streamKey,
-              int bitrate = 1500 * 1024,
-            }) async {
-              if (_controller == null) return;
-              final url = '$rtmpUrl/$streamKey';
-              await _controller!.startVideoStreaming(
-                url,
-                bitrate: bitrate,
-                androidUseOpenGL: false,
-              );
-              _isStreaming = true;
-            }
-
             static Future<void> startStreamToServer(String path, String serverIp) async {
               if (_controller == null) return;
               final url = 'rtmp://$serverIp:1935/$path';
+              
+              await _controller!.prepareForVideoRecording();
               await _controller!.startVideoStreaming(
                 url,
-                bitrate: 1500 * 1024,
+                bitrate: 2500 * 1024, 
                 androidUseOpenGL: false,
               );
               _isStreaming = true;
@@ -338,10 +334,11 @@ jobs:
               await _controller?.dispose();
               _controller = CameraController(
                 cam,
-                ResolutionPreset.medium,
+                ResolutionPreset.high,
                 enableAudio: !_isMicMuted,
               );
               await _controller!.initialize();
+              try { await _controller!.setZoomLevel(1.0); } catch(_) {}
             }
 
             static Future<void> muteMic(bool muted) async {
@@ -350,10 +347,11 @@ jobs:
               await _controller!.dispose();
               _controller = CameraController(
                 cam,
-                ResolutionPreset.medium,
+                ResolutionPreset.high,
                 enableAudio: !muted,
               );
               await _controller!.initialize();
+              try { await _controller!.setZoomLevel(1.0); } catch(_) {}
               _isMicMuted = muted;
             }
 
@@ -419,18 +417,22 @@ jobs:
           cat > lib/widgets/live_camera.dart << 'D'
           import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
           import 'package:flutter/material.dart';
+          
           class LiveCamera extends StatefulWidget {
             final bool front;
             const LiveCamera({super.key, this.front = false});
             @override
             State<LiveCamera> createState() => _LiveCameraState();
           }
+          
           class _LiveCameraState extends State<LiveCamera> {
             CameraController? _ctrl;
             bool _ready = false;
             String? _error;
+            
             @override
             void initState() { super.initState(); _init(); }
+            
             Future<void> _init() async {
               try {
                 final cams = await availableCameras();
@@ -439,14 +441,16 @@ jobs:
                     ? CameraLensDirection.front : CameraLensDirection.back;
                 final cam = cams.firstWhere((c) => c.lensDirection == lens,
                     orElse: () => cams.first);
-                _ctrl = CameraController(cam, ResolutionPreset.low,
+                _ctrl = CameraController(cam, ResolutionPreset.high,
                     enableAudio: false);
                 await _ctrl!.initialize();
+                try { await _ctrl!.setZoomLevel(1.0); } catch(_) {}
                 if (mounted) setState(() => _ready = true);
               } catch (e) {
                 if (mounted) setState(() => _error = e.toString());
               }
             }
+            
             @override
             void didUpdateWidget(covariant LiveCamera old) {
               super.didUpdateWidget(old);
@@ -454,8 +458,10 @@ jobs:
                 _ctrl?.dispose(); _ready = false; _init();
               }
             }
+            
             @override
             void dispose() { _ctrl?.dispose(); super.dispose(); }
+            
             @override
             Widget build(BuildContext context) {
               if (_error != null) {
@@ -467,15 +473,8 @@ jobs:
                 return Container(color: Colors.black, child: const Center(
                   child: CircularProgressIndicator(color: Colors.redAccent)));
               }
-              final isFront =
-                  _ctrl!.description.lensDirection == CameraLensDirection.front;
-              
-              return RotatedBox(
-                quarterTurns: isFront ? 3 : 1, 
-                child: AspectRatio(
-                  aspectRatio: _ctrl!.value.aspectRatio,
-                  child: CameraPreview(_ctrl!),
-                ),
+              return Center(
+                child: CameraPreview(_ctrl!),
               );
             }
           }
@@ -707,12 +706,8 @@ jobs:
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(6),
                       child: isReady
-                          ? RotatedBox(
-                              quarterTurns: _front ? 3 : 1,
-                              child: AspectRatio(
-                                aspectRatio: _cam!.value.aspectRatio,
-                                child: CameraPreview(_cam!),
-                              ),
+                          ? Center(
+                              child: CameraPreview(_cam!),
                             )
                           : const Center(child: CircularProgressIndicator(
                               color: Colors.redAccent)),
@@ -1594,6 +1589,7 @@ jobs:
           import 'package:flutter_webrtc/flutter_webrtc.dart';
           import 'package:http/http.dart' as http;
           import 'package:video_player/video_player.dart';
+          import 'package:shared_preferences/shared_preferences.dart';
           import '../models/overlay_item.dart';
           import '../services/overlay_store.dart';
           import '../widgets/overlay_renderer.dart';
@@ -1630,9 +1626,19 @@ jobs:
             
             String _serverIp = "13.140.90.83"; 
 
+            String _savedYtKey = "";
+            String _savedLogoUrl = "https://upload.wikimedia.org/wikipedia/commons/2/20/YouTube_2024.svg";
+            String _savedLogoPos = "Top Right";
+            List<String> _savedBannerUrls = [
+              "https://dummyimage.com/300x80/ff0000/ffffff.png&text=BUY+NOW"
+            ];
+            String _savedBannerPos = "Bottom Left";
+            String _savedTickerText = "";
+
             @override
             void initState() {
               super.initState();
+              _loadSettings();
               _ticker = Timer.periodic(const Duration(seconds: 1),
                 (_) { if (mounted) setState(() => _sec++); });
               _loadOverlays();
@@ -1642,6 +1648,34 @@ jobs:
             void dispose() {
               _ticker?.cancel();
               super.dispose();
+            }
+
+            Future<void> _loadSettings() async {
+              final prefs = await SharedPreferences.getInstance();
+              setState(() {
+                _savedYtKey = prefs.getString('ytKey') ?? "";
+                _savedLogoUrl = prefs.getString('logoUrl') ?? "https://upload.wikimedia.org/wikipedia/commons/2/20/YouTube_2024.svg";
+                _savedLogoPos = prefs.getString('logoPos') ?? "Top Right";
+                
+                final savedBanners = prefs.getStringList('bannerUrls');
+                if (savedBanners != null && savedBanners.isNotEmpty) {
+                  _savedBannerUrls = savedBanners;
+                }
+                
+                _savedBannerPos = prefs.getString('bannerPos') ?? "Bottom Left";
+                _savedTickerText = prefs.getString('tickerText') ?? ""; 
+              });
+            }
+
+            Future<void> _saveSettings(String key, String logo, String logoPos, List<String> banners, String bannerPos, String ticker) async {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setString('ytKey', key);
+              await prefs.setString('logoUrl', logo);
+              await prefs.setString('logoPos', logoPos);
+              await prefs.setStringList('bannerUrls', banners);
+              await prefs.setString('bannerPos', bannerPos);
+              await prefs.setString('tickerText', ticker); 
+              _loadSettings();
             }
 
             Future<void> _loadOverlays() async {
@@ -1762,63 +1796,119 @@ jobs:
               }
             }
 
-            Future<void> _startAutomatedBroadcast() async {
-              final scheduleCtrl = TextEditingController();
-              final rtmpCtrl = TextEditingController(text: "rtmp://a.rtmp.youtube.com/live2/YOUR_YOUTUBE_KEY");
-              
-              final logoCtrl = TextEditingController(text: "https://upload.wikimedia.org/wikipedia/commons/2/20/YouTube_2024.svg");
-              final bannerCtrl = TextEditingController(text: "https://dummyimage.com/300x80/ff0000/ffffff.png&text=BUY+NOW");
-              String logoPos = 'Top Right';
-              String bannerPos = 'Bottom Left';
+            Future<void> _openStreamSettings() async {
+              final rtmpCtrl = TextEditingController(text: _savedYtKey);
+              final logoCtrl = TextEditingController(text: _savedLogoUrl);
+              final bannerCtrl = TextEditingController(text: _savedBannerUrls.join('\n')); 
+              final tickerCtrl = TextEditingController(text: _savedTickerText); 
+              String logoPos = _savedLogoPos;
+              String bannerPos = _savedBannerPos;
 
-              final result = await showDialog<String>(
+              await showDialog(
                 context: context,
                 builder: (ctx) => StatefulBuilder(
                   builder: (context, setDialogState) {
                     return AlertDialog(
                       backgroundColor: _panel,
-                      title: const Text('Add to TV Schedule', style: TextStyle(color: Colors.white, fontSize: 16)),
+                      title: const Text('Stream Settings', style: TextStyle(color: Colors.white, fontSize: 16)),
                       content: SingleChildScrollView(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Text('Video URLs (One per line):', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            const Text('YouTube Stream Key:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            TextField(controller: rtmpCtrl, style: const TextStyle(color: Colors.white, fontSize: 12)),
+                            const SizedBox(height: 12),
+                            const Text('TV Logo URL (PNG):', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            TextField(controller: logoCtrl, style: const TextStyle(color: Colors.white, fontSize: 12)),
+                            DropdownButton<String>(
+                              value: logoPos, dropdownColor: _panel, style: const TextStyle(color: Colors.white, fontSize: 12),
+                              items: ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
+                              onChanged: (val) { if (val != null) setDialogState(() => logoPos = val); },
+                            ),
+                            const SizedBox(height: 12),
+                            
+                            const Text('Rotating Advert Banners (One per line):', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            TextField(
+                              controller: bannerCtrl, 
+                              maxLines: 4,
+                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                              decoration: const InputDecoration(
+                                hintText: 'Link 1\nLink 2\nLink 3',
+                                hintStyle: TextStyle(color: Colors.white24),
+                              ),
+                            ),
+                            
+                            DropdownButton<String>(
+                              value: bannerPos, dropdownColor: _panel, style: const TextStyle(color: Colors.white, fontSize: 12),
+                              items: ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
+                              onChanged: (val) { if (val != null) setDialogState(() => bannerPos = val); },
+                            ),
+                            const SizedBox(height: 12),
+                            
+                            const Text('Scrolling Ticker (Leave blank for none):', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            TextField(
+                              controller: tickerCtrl, 
+                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                              decoration: const InputDecoration(hintText: 'WELCOME TO ABRIMAX TV • LIVE 24/7 •'),
+                            ),
+                          ],
+                        ),
+                      ),
+                      actions: [
+                        FilledButton(
+                          onPressed: () {
+                            final bannerList = bannerCtrl.text.split('\n').where((s) => s.trim().isNotEmpty).toList();
+                            _saveSettings(rtmpCtrl.text.trim(), logoCtrl.text.trim(), logoPos, bannerList, bannerPos, tickerCtrl.text.trim());
+                            Navigator.pop(ctx);
+                          },
+                          child: const Text('SAVE SETTINGS')
+                        ),
+                      ],
+                    );
+                  }
+                ),
+              );
+            }
+
+            Future<void> _startAutomatedBroadcast() async {
+              if (_savedYtKey.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please set your Stream Settings first!')));
+                _openStreamSettings();
+                return;
+              }
+
+              final scheduleCtrl = TextEditingController();
+              bool isAdvert = false;
+
+              final result = await showDialog<String>(
+                context: context,
+                builder: (ctx) => StatefulBuilder( 
+                  builder: (context, setDialogState) {
+                    return AlertDialog(
+                      backgroundColor: _panel,
+                      title: const Text('Add Video', style: TextStyle(color: Colors.white, fontSize: 16)),
+                      content: SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('Video URL(s) (One per line):', style: TextStyle(color: Colors.white70, fontSize: 12)),
                             TextField(
                               controller: scheduleCtrl,
                               maxLines: 5,
                               style: const TextStyle(color: Colors.white, fontSize: 12),
                               decoration: const InputDecoration(
-                                hintText: 'https://link.com/video.mp4\nhttps://youtube.com/watch?v=...',
+                                hintText: 'https://link.com/video.mp4',
                                 hintStyle: TextStyle(color: Colors.white24),
                               ),
                             ),
-                            const SizedBox(height: 12),
-                            const Text('RTMP URLs (One per line):', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                            TextField(
-                              controller: rtmpCtrl,
-                              maxLines: 2,
-                              style: const TextStyle(color: Colors.white, fontSize: 12),
-                              decoration: const InputDecoration(hintStyle: TextStyle(color: Colors.white24)),
-                            ),
-                            const SizedBox(height: 12),
-                            const Text('TV Logo URL (PNG):', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                            TextField(controller: logoCtrl, style: const TextStyle(color: Colors.white, fontSize: 12)),
-                            DropdownButton<String>(
-                              value: logoPos,
-                              dropdownColor: _panel,
-                              style: const TextStyle(color: Colors.white, fontSize: 12),
-                              items: ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
-                              onChanged: (val) { if (val != null) setDialogState(() => logoPos = val); },
-                            ),
-                            const SizedBox(height: 12),
-                            const Text('Advert Banner URL (PNG):', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                            TextField(controller: bannerCtrl, style: const TextStyle(color: Colors.white, fontSize: 12)),
-                            DropdownButton<String>(
-                              value: bannerPos,
-                              dropdownColor: _panel,
-                              style: const TextStyle(color: Colors.white, fontSize: 12),
-                              items: ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
-                              onChanged: (val) { if (val != null) setDialogState(() => bannerPos = val); },
+                            CheckboxListTile(
+                              title: const Text('Play as Advert (Clean Screen)', style: TextStyle(color: Colors.white, fontSize: 12)),
+                              value: isAdvert,
+                              activeColor: Colors.tealAccent,
+                              contentPadding: EdgeInsets.zero,
+                              onChanged: (val) {
+                                setDialogState(() => isAdvert = val ?? false);
+                              },
                             ),
                           ],
                         ),
@@ -1826,13 +1916,14 @@ jobs:
                       actions: [
                         TextButton(
                           onPressed: () async {
-                            try {
-                              await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule'));
-                              if (ctx.mounted) Navigator.pop(ctx);
-                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Broadcast Stopped.')));
-                            } catch (e) {}
+                            await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule'));
+                            if (ctx.mounted) Navigator.pop(ctx);
                           },
                           child: const Text('STOP LIVE', style: TextStyle(color: Colors.red)),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx, 'PLAY'),
+                          child: const Text('PLAY NOW', style: TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold)),
                         ),
                         FilledButton(
                           onPressed: () => Navigator.pop(ctx, 'ADD'),
@@ -1844,31 +1935,143 @@ jobs:
                 ),
               );
 
-              if (result == 'ADD') {
+              if (result == 'ADD' || result == 'PLAY') {
                 final rawLines = scheduleCtrl.text.split('\n').where((u) => u.trim().isNotEmpty).toList();
-                final platforms = rtmpCtrl.text.split('\n').where((u) => u.trim().isNotEmpty).toList();
-                
-                if (rawLines.isEmpty || platforms.isEmpty) return;
+                if (rawLines.isEmpty) return;
 
                 final List<Map<String, dynamic>> scheduleJson = [];
                 for (final line in rawLines) {
                   scheduleJson.add({
-                    'url': line.trim(),
-                    'duration': 0,
+                    'url': line.trim(), 
+                    'isAdvert': isAdvert, 
+                    'duration': 0
                   });
                 }
 
+                final endpoint = (result == 'PLAY') ? 'play-now' : 'start-schedule';
+
                 try {
                   final response = await http.post(
-                    Uri.parse('http://$_serverIp:3000/start-schedule'),
+                    Uri.parse('http://$_serverIp:3000/$endpoint'),
                     headers: {'Content-Type': 'application/json'},
                     body: jsonEncode({
                       'schedule': scheduleJson, 
-                      'platforms': platforms,
-                      'logoUrl': logoCtrl.text.trim(),
-                      'logoPosition': logoPos,
-                      'bannerUrl': bannerCtrl.text.trim(),
-                      'bannerPosition': bannerPos,
+                      'platforms': [_savedYtKey],
+                      'logoUrl': _savedLogoUrl,
+                      'logoPosition': _savedLogoPos,
+                      'bannerUrls': _savedBannerUrls, 
+                      'bannerPosition': _savedBannerPos,
+                      'tickerText': _savedTickerText, 
+                    }),
+                  );
+                  
+                  if (response.statusCode == 200 && mounted) {
+                    final msg = jsonDecode(response.body)['message'];
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to connect to server: $e')));
+                  }
+                }
+              }
+            }
+
+            Future<void> _scheduleTimedVideo() async {
+              if (_savedYtKey.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please set your Stream Settings first!')));
+                _openStreamSettings();
+                return;
+              }
+
+              final scheduleCtrl = TextEditingController();
+              TimeOfDay? pickedTime;
+              bool isAdvert = false;
+
+              final result = await showDialog<String>(
+                context: context,
+                builder: (ctx) => StatefulBuilder(
+                  builder: (context, setDialogState) {
+                    return AlertDialog(
+                      backgroundColor: _panel,
+                      title: const Text('Schedule Video at Exact Time', style: TextStyle(color: Colors.white, fontSize: 16)),
+                      content: SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('Video URL:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            TextField(
+                              controller: scheduleCtrl,
+                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                              decoration: const InputDecoration(
+                                hintText: 'https://link.com/movie.mp4',
+                                hintStyle: TextStyle(color: Colors.white24),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                              onPressed: () async {
+                                final time = await showTimePicker(
+                                  context: context,
+                                  initialTime: TimeOfDay.now(),
+                                );
+                                if (time != null) {
+                                  setDialogState(() => pickedTime = time);
+                                }
+                              },
+                              icon: const Icon(Icons.access_time),
+                              label: Text(pickedTime == null ? 'Select Time' : 'Time: ${pickedTime!.format(context)}'),
+                            ),
+                            CheckboxListTile(
+                              title: const Text('Play as Advert (Clean Screen)', style: TextStyle(color: Colors.white, fontSize: 12)),
+                              value: isAdvert,
+                              activeColor: Colors.tealAccent,
+                              contentPadding: EdgeInsets.zero,
+                              onChanged: (val) {
+                                setDialogState(() => isAdvert = val ?? false);
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          child: const Text('CANCEL'),
+                        ),
+                        FilledButton(
+                          onPressed: () {
+                            if (pickedTime == null || scheduleCtrl.text.trim().isEmpty) return;
+                            Navigator.pop(ctx, 'SCHEDULE');
+                          },
+                          child: const Text('SCHEDULE')
+                        ),
+                      ],
+                    );
+                  }
+                ),
+              );
+
+              if (result == 'SCHEDULE' && pickedTime != null) {
+                final hour = pickedTime!.hour.toString().padLeft(2, '0');
+                final minute = pickedTime!.minute.toString().padLeft(2, '0');
+                final timeString = "$hour:$minute";
+
+                try {
+                  final response = await http.post(
+                    Uri.parse('http://$_serverIp:3000/schedule-time'),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode({
+                      'time': timeString,
+                      'videoUrl': scheduleCtrl.text.trim(),
+                      'isAdvert': isAdvert,
+                      'platforms': [_savedYtKey],
+                      'logoUrl': _savedLogoUrl,
+                      'logoPosition': _savedLogoPos,
+                      'bannerUrls': _savedBannerUrls,
+                      'bannerPosition': _savedBannerPos,
+                      'tickerText': _savedTickerText,
                     }),
                   );
                   
@@ -2066,7 +2269,9 @@ jobs:
                     _mi(Icons.layers, 'Graphics', _openG, teal: true),
                     _mi(Icons.link, 'Link Accounts', _openA),
                     _mi(Icons.movie, 'Studio Canvas (Video + Cam)', _openStudioCanvas, teal: true),
+                    _mi(Icons.settings, 'Stream Settings (Key/Logos)', () { setState(() => _menuOpen = false); _openStreamSettings(); }),
                     _mi(Icons.power_settings_new, 'Add to TV Schedule', _startAutomatedBroadcast, teal: true),
+                    _mi(Icons.schedule, 'Schedule at Exact Time', () { setState(() => _menuOpen = false); _scheduleTimedVideo(); }, teal: true),
                   ])));
             }
             Widget _mi(IconData icon, String label, VoidCallback onTap, {bool teal = false}) {
@@ -2144,9 +2349,6 @@ jobs:
           }
           D
 
-      # ─────────────────────────────────────────────────────────────
-      # 4) Android Gradle configuration (Aligned with Flutter 3.44.0 & AGP 9.0.1)
-      # ─────────────────────────────────────────────────────────────
       - name: Configure Android
         run: |
           mkdir -p android/gradle/wrapper
@@ -2278,8 +2480,7 @@ jobs:
                             android:theme="@style/LaunchTheme"
                             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
                             android:hardwareAccelerated="true"
-                            android:windowSoftInputMode="adjustResize"
-                            android:screenOrientation="landscape">
+                            android:windowSoftInputMode="adjustResize">
                       <meta-data android:name="io.flutter.embedding.android.NormalTheme"
                                  android:resource="@style/NormalTheme" />
                       <intent-filter>
@@ -2298,9 +2499,6 @@ jobs:
           </manifest>
           XML
 
-      # ─────────────────────────────────────────────────────────────
-      # 5) Build APK
-      # ─────────────────────────────────────────────────────────────
       - name: Build APK
         run: |
           rm -f pubspec.lock
