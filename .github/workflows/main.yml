@@ -86,6 +86,23 @@ jobs:
               image: "assets/icon/app_icon.png"
           P
 
+      # ─────────────────────────────────────────────────────────────
+      # THE BULLETPROOF NDK FIX (Path 2)
+      # ─────────────────────────────────────────────────────────────
+      - name: Install Exact NDK Version
+        run: |
+          # 1. Delete any corrupted half-downloads
+          rm -rf $ANDROID_HOME/.downloadIntermediates
+          rm -rf $ANDROID_HOME/ndk/28.2.13676358
+          
+          # 2. Accept licenses and install the specific NDK version that failed
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;28.2.13676358"
+          
+          # 3. Export the path so Gradle finds it instantly
+          echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> $GITHUB_ENV
+
       - name: Write Dart files
         run: |
           # ─── lib/main.dart ───
@@ -2437,6 +2454,7 @@ jobs:
           tasks.register("clean", Delete) { delete rootProject.buildDir }
           E
 
+          # FORCED MATCHING NDK VERSION HERE
           cat > android/app/build.gradle << 'E'
           plugins {
               id "com.android.application"
@@ -2447,7 +2465,7 @@ jobs:
           android {
               namespace "com.yourcompany.mobile_tv_studio"
               compileSdk 37
-              ndkVersion "26.1.10909125"
+              ndkVersion "28.2.13676358"
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_17
                   targetCompatibility JavaVersion.VERSION_17
