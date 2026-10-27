@@ -772,9 +772,9 @@ jobs:
                       const SizedBox(height: 16),
                       const Text('ZOOM', style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
                       Slider(
-                        value: _zoom,
+                        value: _zoom.clamp(1.0, _maxZoom),
                         min: 1.0,
-                        max: _maxZoom,
+                        max: _maxZoom > 1.0 ? _maxZoom : 2.0,
                         activeColor: Colors.tealAccent,
                         onChanged: (val) async {
                           if (_cam != null) {
@@ -1590,7 +1590,9 @@ jobs:
           import 'package:video_player/video_player.dart';
           import 'package:shared_preferences/shared_preferences.dart';
           import '../models/overlay_item.dart';
+          import '../models/account_item.dart';
           import '../services/overlay_store.dart';
+          import '../services/account_store.dart';
           import '../widgets/overlay_renderer.dart';
           import '../widgets/live_camera.dart';
           import 'graphics_editor.dart';
@@ -1876,6 +1878,18 @@ jobs:
                 return;
               }
 
+              final store = AccountStore();
+              final linkedAccounts = await store.loadAll();
+              
+              if (linkedAccounts.isEmpty) {
+                  linkedAccounts.add(AccountItem(id: 'default', platform: 'YouTube', name: 'Default YouTube', streamKey: _savedYtKey, rtmpUrl: ''));
+              }
+
+              Map<String, bool> activePlatforms = {};
+              for (var acc in linkedAccounts) {
+                activePlatforms[acc.id] = true;
+              }
+
               final scheduleCtrl = TextEditingController();
               bool isAdvert = false;
 
@@ -1889,17 +1903,32 @@ jobs:
                       content: SingleChildScrollView(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text('Video URL(s) (One per line):', style: TextStyle(color: Colors.white70, fontSize: 12)),
                             TextField(
                               controller: scheduleCtrl,
-                              maxLines: 5,
+                              maxLines: 4,
                               style: const TextStyle(color: Colors.white, fontSize: 12),
                               decoration: const InputDecoration(
                                 hintText: 'https://link.com/video.mp4',
                                 hintStyle: TextStyle(color: Colors.white24),
                               ),
                             ),
+                            const SizedBox(height: 12),
+                            const Text('Broadcast To:', style: TextStyle(color: Colors.tealAccent, fontSize: 12, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 8),
+                            ...linkedAccounts.map((acc) {
+                              return CheckboxListTile(
+                                title: Text('${acc.platform} (${acc.name})', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                                value: activePlatforms[acc.id],
+                                activeColor: Colors.tealAccent,
+                                contentPadding: EdgeInsets.zero,
+                                onChanged: (val) {
+                                  setDialogState(() => activePlatforms[acc.id] = val ?? false);
+                                },
+                              );
+                            }).toList(),
                             CheckboxListTile(
                               title: const Text('Play as Advert (Clean Screen)', style: TextStyle(color: Colors.white, fontSize: 12)),
                               value: isAdvert,
@@ -1920,10 +1949,6 @@ jobs:
                           },
                           child: const Text('STOP LIVE', style: TextStyle(color: Colors.red)),
                         ),
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx, 'PLAY'),
-                          child: const Text('PLAY NOW', style: TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold)),
-                        ),
                         FilledButton(
                           onPressed: () => Navigator.pop(ctx, 'ADD'),
                           child: const Text('ADD TO QUEUE')
@@ -1934,28 +1959,38 @@ jobs:
                 ),
               );
 
-              if (result == 'ADD' || result == 'PLAY') {
+              if (result == 'ADD') {
                 final rawLines = scheduleCtrl.text.split('\n').where((u) => u.trim().isNotEmpty).toList();
                 if (rawLines.isEmpty) return;
 
                 final List<Map<String, dynamic>> scheduleJson = [];
                 for (final line in rawLines) {
-                  scheduleJson.add({
-                    'url': line.trim(), 
-                    'isAdvert': isAdvert, 
-                    'duration': 0
-                  });
+                  scheduleJson.add({'url': line.trim(), 'isAdvert': isAdvert, 'duration': 0});
                 }
 
-                final endpoint = (result == 'PLAY') ? 'play-now' : 'start-schedule';
+                final List<String> selectedKeys = [];
+                for (var acc in linkedAccounts) {
+                  if (activePlatforms[acc.id] == true) {
+                     if (acc.platform == 'YouTube' && acc.rtmpUrl.isEmpty) {
+                        selectedKeys.add(acc.streamKey);
+                     } else {
+                        selectedKeys.add('${acc.rtmpUrl}/${acc.streamKey}');
+                     }
+                  }
+                }
+
+                if (selectedKeys.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select at least one platform.')));
+                  return;
+                }
 
                 try {
                   final response = await http.post(
-                    Uri.parse('http://$_serverIp:3000/$endpoint'),
+                    Uri.parse('http://$_serverIp:3000/start-schedule'),
                     headers: {'Content-Type': 'application/json'},
                     body: jsonEncode({
                       'schedule': scheduleJson, 
-                      'platforms': [_savedYtKey],
+                      'platforms': selectedKeys, 
                       'logoUrl': _savedLogoUrl,
                       'logoPosition': _savedLogoPos,
                       'bannerUrls': _savedBannerUrls, 
@@ -1969,9 +2004,7 @@ jobs:
                     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
                   }
                 } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to connect to server: $e')));
-                  }
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to connect: $e')));
                 }
               }
             }
