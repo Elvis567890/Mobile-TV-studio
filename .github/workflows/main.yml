@@ -266,7 +266,6 @@ jobs:
                 cam,
                 ResolutionPreset.high, 
                 enableAudio: true,
-                imageFormatGroup: ImageFormatGroup.yuv420,
               );
               await _controller!.initialize();
               
