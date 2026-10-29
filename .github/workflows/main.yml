@@ -1999,122 +1999,16 @@ jobs:
                     }),
                   );
                   
-                  if (response.statusCode == 200 && mounted) {
-                    final msg = jsonDecode(response.body)['message'];
+                  if (mounted) {
+                    String msg = 'Action completed';
+                    try {
+                      final data = jsonDecode(response.body);
+                      if (data['message'] != null) msg = data['message'];
+                    } catch(_) { msg = 'Server Status: ${response.statusCode}'; }
                     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
                   }
                 } catch (e) {
                   if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to connect: $e')));
-                }
-              }
-            }
-
-            Future<void> _scheduleTimedVideo() async {
-              if (_savedYtKey.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please set your Stream Settings first!')));
-                _openStreamSettings();
-                return;
-              }
-
-              final scheduleCtrl = TextEditingController();
-              TimeOfDay? pickedTime;
-              bool isAdvert = false;
-
-              final result = await showDialog<String>(
-                context: context,
-                builder: (ctx) => StatefulBuilder(
-                  builder: (context, setDialogState) {
-                    return AlertDialog(
-                      backgroundColor: _panel,
-                      title: const Text('Schedule Video at Exact Time', style: TextStyle(color: Colors.white, fontSize: 16)),
-                      content: SingleChildScrollView(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Text('Video URL:', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                            TextField(
-                              controller: scheduleCtrl,
-                              style: const TextStyle(color: Colors.white, fontSize: 12),
-                              decoration: const InputDecoration(
-                                hintText: 'https://link.com/movie.mp4',
-                                hintStyle: TextStyle(color: Colors.white24),
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
-                              onPressed: () async {
-                                final time = await showTimePicker(
-                                  context: context,
-                                  initialTime: TimeOfDay.now(),
-                                );
-                                if (time != null) {
-                                  setDialogState(() => pickedTime = time);
-                                }
-                              },
-                              icon: const Icon(Icons.access_time),
-                              label: Text(pickedTime == null ? 'Select Time' : 'Time: ${pickedTime!.format(context)}'),
-                            ),
-                            CheckboxListTile(
-                              title: const Text('Play as Advert (Clean Screen)', style: TextStyle(color: Colors.white, fontSize: 12)),
-                              value: isAdvert,
-                              activeColor: Colors.tealAccent,
-                              contentPadding: EdgeInsets.zero,
-                              onChanged: (val) {
-                                setDialogState(() => isAdvert = val ?? false);
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          child: const Text('CANCEL'),
-                        ),
-                        FilledButton(
-                          onPressed: () {
-                            if (pickedTime == null || scheduleCtrl.text.trim().isEmpty) return;
-                            Navigator.pop(ctx, 'SCHEDULE');
-                          },
-                          child: const Text('SCHEDULE')
-                        ),
-                      ],
-                    );
-                  }
-                ),
-              );
-
-              if (result == 'SCHEDULE' && pickedTime != null) {
-                final hour = pickedTime!.hour.toString().padLeft(2, '0');
-                final minute = pickedTime!.minute.toString().padLeft(2, '0');
-                final timeString = "$hour:$minute";
-
-                try {
-                  final response = await http.post(
-                    Uri.parse('http://$_serverIp:3000/schedule-time'),
-                    headers: {'Content-Type': 'application/json'},
-                    body: jsonEncode({
-                      'time': timeString,
-                      'videoUrl': scheduleCtrl.text.trim(),
-                      'isAdvert': isAdvert,
-                      'platforms': [_savedYtKey ?? ""],
-                      'logoUrl': _savedLogoUrl ?? "",
-                      'logoPosition': _savedLogoPos ?? "Top Right",
-                      'bannerUrls': _savedBannerUrls ?? [],
-                      'bannerPosition': _savedBannerPos ?? "Bottom Left",
-                      'tickerText': _savedTickerText ?? "",
-                    }),
-                  );
-                  
-                  if (response.statusCode == 200 && mounted) {
-                    final msg = jsonDecode(response.body)['message'];
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to connect to server: $e')));
-                  }
                 }
               }
             }
