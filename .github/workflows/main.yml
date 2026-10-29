@@ -361,26 +361,162 @@ jobs:
           cat > lib/screens/accounts_screen.dart << 'D'
           import 'package:flutter/material.dart';
           import 'package:uuid/uuid.dart';
-          import '../models/account_item.dart'; import '../services/account_store.dart';
-          class AccountsScreen extends StatefulWidget { const AccountsScreen({super.key}); @override State<AccountsScreen> createState() => _AccountsScreenState(); }
+          import '../models/account_item.dart';
+          import '../services/account_store.dart';
+
+          class AccountsScreen extends StatefulWidget {
+            const AccountsScreen({super.key});
+            @override
+            State<AccountsScreen> createState() => _AccountsScreenState();
+          }
+
           class _AccountsScreenState extends State<AccountsScreen> {
-            final _store = AccountStore(); List<AccountItem> _items = []; bool _loading = true;
-            final _platforms = <String, Map<String, String>>{'YouTube': {'rtmp': 'rtmp://a.rtmp.youtube.com/live2', 'color': 'FF0000'}, 'Twitch': {'rtmp': 'rtmp://live.twitch.tv/app', 'color': '9146FF'}, 'Facebook': {'rtmp': 'rtmps://live-api-s.facebook.com:443/rtmp', 'color': '1877F2'}, 'TikTok': {'rtmp': 'rtmp://push.tiktokv.com/live', 'color': '00F2EA'}, 'Kick': {'rtmp': 'rtmp://fa723fc1b171.global-contribute.live-video.net/app', 'color': '53FC18'}, 'Trovo': {'rtmp': 'rtmp://livepush.trovo.live/live', 'color': '27DB8A'}, 'LinkedIn': {'rtmp': 'rtmp://rtmp-api.facebook.com:80/rtmp', 'color': '0A66C2'}, 'X': {'rtmp': 'rtmp://ingest.pscp.tv:80/x', 'color': '1DA1F2'}};
-            @override void initState() { super.initState(); _load(); }
-            Future<void> _load() async { final items = await _store.loadAll(); if (mounted) setState(() { _items = items; _loading = false; }); }
-            IconData _icon(String name) { switch (name) { case 'YouTube': return Icons.play_circle_fill; case 'Twitch': return Icons.videogame_asset; case 'Facebook': return Icons.facebook; case 'TikTok': return Icons.music_note; case 'Kick': return Icons.sports_esports; case 'Trovo': return Icons.live_tv; case 'LinkedIn': return Icons.business; case 'X': return Icons.alternate_email; } return Icons.live_tv; }
-            Color _color(String name) { final hex = _platforms[name]?['color'] ?? '3B82F6'; return Color(int.parse('FF$hex', radix: 16)); }
-            Future<void> _link(String platform) async {
-              final keyCtrl = TextEditingController(); final nameCtrl = TextEditingController(text: platform);
-              final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(backgroundColor: const Color(0xFF141418), title: Text('Paste $platform stream key'), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [TextField(controller: nameCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Display name')), const SizedBox(height: 8), TextField(controller: keyCtrl, autofocus: true, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Stream Key'))])), actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('LINK'))]));
-              if (ok != true || keyCtrl.text.trim().isEmpty) return;
-              final u = [..._items]; u.removeWhere((a) => a.platform == platform); u.add(AccountItem(id: const Uuid().v4(), platform: platform, name: nameCtrl.text.trim(), streamKey: keyCtrl.text.trim(), rtmpUrl: _platforms[platform]?['rtmp'] ?? ''));
-              await _store.saveAll(u); if (mounted) setState(() => _items = u);
+            final _store = AccountStore();
+            List<AccountItem> _items = [];
+            bool _loading = true;
+            final _platforms = <String, Map<String, String>>{
+              'YouTube': {'rtmp': 'rtmp://a.rtmp.youtube.com/live2', 'color': 'FF0000'},
+              'Twitch': {'rtmp': 'rtmp://live.twitch.tv/app', 'color': '9146FF'},
+              'Facebook': {'rtmp': 'rtmps://live-api-s.facebook.com:443/rtmp', 'color': '1877F2'},
+              'TikTok': {'rtmp': 'rtmp://push.tiktokv.com/live', 'color': '00F2EA'},
+              'Kick': {'rtmp': 'rtmp://fa723fc1b171.global-contribute.live-video.net/app', 'color': '53FC18'},
+              'Trovo': {'rtmp': 'rtmp://livepush.trovo.live/live', 'color': '27DB8A'},
+              'LinkedIn': {'rtmp': 'rtmp://rtmp-api.facebook.com:80/rtmp', 'color': '0A66C2'},
+              'X': {'rtmp': 'rtmp://ingest.pscp.tv:80/x', 'color': '1DA1F2'}
+            };
+
+            @override
+            void initState() {
+              super.initState();
+              _load();
             }
-            Future<void> _unlink(String id) async { final u = _items.where((a) => a.id != id).toList(); await _store.saveAll(u); if (mounted) setState(() => _items = u); }
-            @override Widget build(BuildContext context) {
-              if (_loading) { return const Scaffold(backgroundColor: Color(0xFF0A0A0F), body: Center(child: CircularProgressIndicator())); }
-              return Scaffold(backgroundColor: const Color(0xFF0A0A0F), appBar: AppBar(title: const Text('LINK ACCOUNTS', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)), backgroundColor: const Color(0xFF141418)), body: GridView.count(padding: const EdgeInsets.all(16), crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 1.5, children: _platforms.keys.map((name) { final linked = _items.where((a) => a.platform == name).toList(); final isLinked = linked.isNotEmpty; final color = _color(name); return InkWell(onTap: () => _link(name), borderRadius: BorderRadius.circular(12), child: Container(decoration: BoxDecoration(color: color.withOpacity(0.10), borderRadius: BorderRadius.circular(12), border: Border.all(color: isLinked ? color : Colors.white24, width: 2)), child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Row(children: [Icon(_icon(name), color: color, size: 28), const Spacer(), if (isLinked) GestureDetector(onTap: () => _unlink(linked.first.id), child: const Icon(Icons.close, color: Colors.white54, size: 18))]), Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(name, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 1)), const SizedBox(height: 2), Text(isLinked ? linked.first.name : 'Tap to paste key', style: TextStyle(color: isLinked ? color : Colors.white54, fontSize: 11), overflow: TextOverflow.ellipsis)])]))); }).toList()));
+
+            Future<void> _load() async {
+              final items = await _store.loadAll();
+              if (mounted) setState(() { _items = items; _loading = false; });
+            }
+
+            IconData _icon(String name) {
+              switch (name) {
+                case 'YouTube': return Icons.play_circle_fill;
+                case 'Twitch': return Icons.videogame_asset;
+                case 'Facebook': return Icons.facebook;
+                case 'TikTok': return Icons.music_note;
+                case 'Kick': return Icons.sports_esports;
+                case 'Trovo': return Icons.live_tv;
+                case 'LinkedIn': return Icons.business;
+                case 'X': return Icons.alternate_email;
+              }
+              return Icons.live_tv;
+            }
+
+            Color _color(String name) {
+              final hex = _platforms[name]?['color'] ?? '3B82F6';
+              return Color(int.parse('FF$hex', radix: 16));
+            }
+
+            Future<void> _link(String platform) async {
+              final keyCtrl = TextEditingController();
+              final nameCtrl = TextEditingController(text: platform);
+              final ok = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  backgroundColor: const Color(0xFF141418),
+                  title: Text('Paste $platform stream key'),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextField(controller: nameCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Display name')),
+                        const SizedBox(height: 8),
+                        TextField(controller: keyCtrl, autofocus: true, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Stream Key'))
+                      ]
+                    )
+                  ),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')),
+                    FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('LINK'))
+                  ]
+                )
+              );
+              if (ok != true || keyCtrl.text.trim().isEmpty) return;
+              final u = [..._items];
+              u.removeWhere((a) => a.platform == platform);
+              u.add(AccountItem(id: const Uuid().v4(), platform: platform, name: nameCtrl.text.trim(), streamKey: keyCtrl.text.trim(), rtmpUrl: _platforms[platform]?['rtmp'] ?? ''));
+              await _store.saveAll(u);
+              if (mounted) setState(() => _items = u);
+            }
+
+            Future<void> _unlink(String id) async {
+              final u = _items.where((a) => a.id != id).toList();
+              await _store.saveAll(u);
+              if (mounted) setState(() => _items = u);
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              if (_loading) {
+                return const Scaffold(backgroundColor: Color(0xFF0A0A0F), body: Center(child: CircularProgressIndicator()));
+              }
+              return Scaffold(
+                backgroundColor: const Color(0xFF0A0A0F),
+                appBar: AppBar(title: const Text('LINK ACCOUNTS', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)), backgroundColor: const Color(0xFF141418)),
+                body: GridView.count(
+                  padding: const EdgeInsets.all(16),
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  childAspectRatio: 1.5,
+                  children: _platforms.keys.map((name) {
+                    final linked = _items.where((a) => a.platform == name).toList();
+                    final isLinked = linked.isNotEmpty;
+                    final color = _color(name);
+                    return InkWell(
+                      onTap: () => _link(name),
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: color.withOpacity(0.10),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: isLinked ? color : Colors.white24, width: 2)
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(_icon(name), color: color, size: 28),
+                                  const Spacer(),
+                                  if (isLinked)
+                                    GestureDetector(
+                                      onTap: () => _unlink(linked.first.id),
+                                      child: const Icon(Icons.close, color: Colors.white54, size: 18)
+                                    )
+                                ]
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(name, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 1)),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    isLinked ? linked.first.name : 'Tap to paste key',
+                                    style: TextStyle(color: isLinked ? color : Colors.white54, fontSize: 11),
+                                    overflow: TextOverflow.ellipsis
+                                  )
+                                ]
+                              )
+                            ]
+                          )
+                        )
+                      )
+                    );
+                  }).toList()
+                )
+              );
             }
           }
           D
