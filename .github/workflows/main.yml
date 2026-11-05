@@ -35,7 +35,7 @@ jobs:
               f1 = f2 = ImageFont.load_default()
           d.text((512,800),'ABRIMAX',fill=(255,255,255,255),anchor='mm',font=f1)
           d.text((512,900),'STUDIO',fill=(239,68,68,255),anchor='mm',font=f2)
-          img.save('assets/icon/app_icon.png')
+          img.convert('RGBA').save('assets/icon/app_icon.png', 'PNG')
           PY
 
           cat > pubspec.yaml << 'P'
@@ -118,7 +118,7 @@ jobs:
 
           # ─── lib/models/overlay_item.dart ───
           cat > lib/models/overlay_item.dart << 'D'
-          enum OverlayKind { text, liveBadge }
+          enum OverlayKind { text, liveBadge, lowerThird }
           class OverlayItem {
             final String id; final OverlayKind kind; final String content; double x; double y; double size; int color;
             OverlayItem({required this.id, required this.kind, required this.content, required this.x, required this.y, this.size = 20, this.color = 0xFFFFFFFF});
@@ -220,6 +220,9 @@ jobs:
             Widget _item(OverlayItem o) {
               if (o.kind == OverlayKind.liveBadge) {
                 return Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: Color(o.color), borderRadius: BorderRadius.circular(4)), child: Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 8, height: 8, decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle)), const SizedBox(width: 6), Text(o.content, style: TextStyle(color: Colors.white, fontSize: o.size, fontWeight: FontWeight.w900, letterSpacing: 2))]));
+              }
+              if (o.kind == OverlayKind.lowerThird) {
+                return Container(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10), decoration: BoxDecoration(color: Color(o.color), borderRadius: BorderRadius.circular(2)), child: Text(o.content, style: TextStyle(color: Colors.white, fontSize: o.size, fontWeight: FontWeight.bold)));
               }
               return Text(o.content, style: TextStyle(color: Color(o.color), fontSize: o.size, fontWeight: FontWeight.w900, letterSpacing: 1, shadows: const [Shadow(blurRadius: 4, color: Colors.black)]));
             }
@@ -333,27 +336,43 @@ jobs:
           cat > lib/screens/graphics_editor.dart << 'D'
           import 'package:flutter/material.dart';
           import 'package:uuid/uuid.dart';
+          import 'package:http/http.dart' as http;
+          import 'dart:convert';
           import '../models/overlay_item.dart'; import '../services/overlay_store.dart'; import '../widgets/overlay_renderer.dart';
-          class GraphicsEditor extends StatefulWidget { const GraphicsEditor({super.key}); @override State<GraphicsEditor> createState() => _GraphicsEditorState(); }
+          class GraphicsEditor extends StatefulWidget { final String serverIp; const GraphicsEditor({super.key, required this.serverIp}); @override State<GraphicsEditor> createState() => _GraphicsEditorState(); }
           class _GraphicsEditorState extends State<GraphicsEditor> {
             final _store = OverlayStore(); List<OverlayItem> _items = []; String? _sel; final _swatches = [0xFFFFFFFF, 0xFFEF4444, 0xFFF5C542, 0xFF22C55E, 0xFF3B82F6, 0xFF8B5CF6, 0xFFFF6B00, 0xFF00C2FF];
             @override void initState() { super.initState(); _load(); }
             Future<void> _load() async { final items = await _store.loadAll(); if (mounted) setState(() => _items = items); }
-            Future<void> _save() async { await _store.saveAll(_items); if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved'))); }
+            Future<void> _save() async { await _store.saveAll(_items); if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved Locally'))); }
+            
+            Future<void> _pushLive() async {
+              try {
+                await http.post(Uri.parse('http://${widget.serverIp}:3000/update-live-graphics'), 
+                  headers: {'Content-Type': 'application/json'}, 
+                  body: jsonEncode({'overlays': _items.map((e) => e.toJson()).toList()})
+                );
+                if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Graphics Pushed Live!')));
+              } catch (e) {
+                if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+              }
+            }
+
             Future<void> _addText() async {
               final ctrl = TextEditingController();
               final text = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(backgroundColor: const Color(0xFF141418), title: const Text('Add Text'), content: TextField(controller: ctrl, autofocus: true, style: const TextStyle(color: Colors.white)), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('ADD'))]));
               if (text == null || text.isEmpty) return; setState(() => _items.add(OverlayItem(id: const Uuid().v4(), kind: OverlayKind.text, content: text, x: 0.5, y: 0.5)));
             }
             void _addLive() { setState(() => _items.add(OverlayItem(id: const Uuid().v4(), kind: OverlayKind.liveBadge, content: 'LIVE', x: 0.1, y: 0.15, size: 14, color: 0xFFEF4444))); }
+            void _addLowerThird() { setState(() => _items.add(OverlayItem(id: const Uuid().v4(), kind: OverlayKind.lowerThird, content: 'BREAKING NEWS', x: 0.15, y: 0.85, size: 18, color: 0xFF000000))); }
             void _move(Offset d, Size box) { if (_sel == null) return; final item = _items.firstWhere((e) => e.id == _sel); setState(() { item.x = (item.x + d.dx / box.width).clamp(0.0, 1.0); item.y = (item.y + d.dy / box.height).clamp(0.0, 1.0); }); }
             void _setColor(int c) { if (_sel == null) return; final item = _items.firstWhere((e) => e.id == _sel); setState(() => item.color = c); }
             List<Widget> _buildHandles(Size box) { return _items.map((it) => Positioned(left: it.x * box.width - 70, top: it.y * box.height - 20, child: GestureDetector(onTap: () => setState(() => _sel = it.id), child: Container(width: 140, height: 40, decoration: BoxDecoration(border: Border.all(color: _sel == it.id ? const Color(0xFF3B82F6) : Colors.transparent, width: 2)))))).toList(); }
             Widget _canvas() { return Padding(padding: const EdgeInsets.all(12), child: LayoutBuilder(builder: (context, cons) { final box = Size(cons.maxWidth, cons.maxHeight); return GestureDetector(onPanUpdate: (d) => _move(d.delta, box), child: Container(decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0xFFF5C542), width: 1.5)), child: Stack(children: [const Center(child: Text('DRAG TO MOVE', style: TextStyle(color: Colors.white24, fontSize: 10, letterSpacing: 3))), OverlayRenderer(overlays: _items), ..._buildHandles(box)]))); })); }
             Widget _swatchBar() { return Container(height: 44, color: const Color(0xFF141418), child: ListView(scrollDirection: Axis.horizontal, children: _swatches.map((c) => GestureDetector(onTap: () => _setColor(c), child: Container(margin: const EdgeInsets.all(6), width: 32, height: 32, decoration: BoxDecoration(color: Color(c), shape: BoxShape.circle, border: Border.all(color: Colors.white24, width: 2))))).toList())); }
             Widget _list() { if (_items.isEmpty) { return const Center(child: Text('No overlays. Tap + to add.', style: TextStyle(color: Colors.white54, fontSize: 12))); } return ListView.builder(itemCount: _items.length, itemBuilder: (_, i) { final it = _items[i]; return ListTile(selected: _sel == it.id, selectedTileColor: Colors.white10, title: Text(it.content, style: const TextStyle(color: Colors.white)), trailing: Row(mainAxisSize: MainAxisSize.min, children: [IconButton(icon: const Icon(Icons.remove_circle_outline, color: Colors.white70), onPressed: () => setState(() => it.size = (it.size - 4).clamp(6.0, 200.0))), IconButton(icon: const Icon(Icons.add_circle_outline, color: Colors.white70), onPressed: () => setState(() => it.size = (it.size + 4).clamp(6.0, 200.0))), IconButton(icon: const Icon(Icons.delete_outline, color: Colors.redAccent), onPressed: () => setState(() => _items.removeWhere((e) => e.id == it.id)))]), onTap: () => setState(() => _sel = it.id)); }); }
-            Widget _bottomBar() { return Container(height: 50, color: const Color(0xFF0A0A0F), padding: const EdgeInsets.symmetric(horizontal: 12), child: Row(children: [FilledButton.icon(onPressed: _save, icon: const Icon(Icons.save), label: const Text('SAVE')), const Spacer(), FilledButton.icon(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.check), label: const Text('DONE'))])); }
-            @override Widget build(BuildContext context) { return Scaffold(backgroundColor: const Color(0xFF0A0A0F), appBar: AppBar(title: const Text('GRAPHICS', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)), backgroundColor: const Color(0xFF141418), actions: [IconButton(icon: const Icon(Icons.add, color: Colors.tealAccent), onPressed: _addText), IconButton(icon: const Icon(Icons.fiber_manual_record, color: Colors.redAccent), onPressed: _addLive)]), body: Column(children: [Expanded(flex: 3, child: _canvas()), if (_sel != null) _swatchBar(), Expanded(flex: 2, child: _list()), _bottomBar()])); }
+            Widget _bottomBar() { return Container(height: 50, color: const Color(0xFF0A0A0F), padding: const EdgeInsets.symmetric(horizontal: 12), child: Row(children: [FilledButton.icon(onPressed: _save, icon: const Icon(Icons.save), label: const Text('SAVE')), const Spacer(), FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: Colors.redAccent), onPressed: _pushLive, icon: const Icon(Icons.live_tv), label: const Text('PUSH LIVE')), const Spacer(), FilledButton.icon(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.check), label: const Text('DONE'))])); }
+            @override Widget build(BuildContext context) { return Scaffold(backgroundColor: const Color(0xFF0A0A0F), appBar: AppBar(title: const Text('GRAPHICS', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)), backgroundColor: const Color(0xFF141418), actions: [IconButton(icon: const Icon(Icons.add, color: Colors.tealAccent), onPressed: _addText), IconButton(icon: const Icon(Icons.fiber_manual_record, color: Colors.redAccent), onPressed: _addLive), IconButton(icon: const Icon(Icons.view_headline, color: Colors.orangeAccent), onPressed: _addLowerThird)]), body: Column(children: [Expanded(flex: 3, child: _canvas()), if (_sel != null) _swatchBar(), Expanded(flex: 2, child: _list()), _bottomBar()])); }
           }
           D
 
@@ -598,7 +617,7 @@ jobs:
           const _bg = Color(0xFF0A0A0F); const _panel = Color(0xFF141418); const _red = Color(0xFFEF4444); const _yellow = Color(0xFFF5C542); const _blue = Color(0xFF3B82F6); const _grey = Color(0x14FFFFFF);
           class DirectorScreen extends StatefulWidget { const DirectorScreen({super.key}); @override State<DirectorScreen> createState() => _DirectorScreenState(); }
           class _DirectorScreenState extends State<DirectorScreen> {
-            bool _onAir = false; bool _menuOpen = false; bool _showLiveCamera = false; int _tab = 0; int _sec = 0; int _camCount = 6; bool _isLiveMode = false;
+            bool _onAir = false; bool _menuOpen = false; bool _showLiveCamera = false; int _tab = 0; int _sec = 0; int _camCount = 6; bool _isLiveMode = false; bool _useGraphics = true;
             Timer? _ticker;
             final List<bool> _live = List.generate(15, (i) => i == 0);
             final List<bool> _prev = List.generate(15, (i) => i == 1);
@@ -622,7 +641,18 @@ jobs:
             }
             Future<void> _loadOverlays() async { final items = await _overlayStore.loadAll(); if (mounted) setState(() => _overlays = items); }
             String get _time { final h = (_sec ~/ 3600).toString().padLeft(2, '0'); final m = ((_sec ~/ 60) % 60).toString().padLeft(2, '0'); final s = (_sec % 60).toString().padLeft(2, '0'); return '$h:$m:$s'; }
-            void _take() { setState(() { final l = _live.indexOf(true); final p = _prev.indexOf(true); if (l < 0 || p < 0) return; _live[l] = false; _prev[l] = true; _prev[p] = false; _live[p] = true; }); }
+            
+            Future<void> _take() async {
+              final l = _live.indexOf(true);
+              final p = _prev.indexOf(true);
+              if (l < 0 || p < 0) return;
+              setState(() { _live[l] = false; _prev[l] = true; _prev[p] = false; _live[p] = true; });
+              try {
+                final response = await http.post(Uri.parse('http://$_serverIp:3000/switch-to-cam'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'camPath': 'cam${p + 1}'}));
+                if (response.statusCode == 200 && mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('TAKE Successful! cam${p+1} is live.')));
+              } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Server Error: $e'))); }
+            }
+
             void _selPrev(int i) { setState(() { for (var k = 0; k < _camCount; k++) _prev[k] = false; _prev[i] = true; }); }
             void _setLive(int i) { setState(() { for (var k = 0; k < _camCount; k++) { _live[k] = false; _prev[k] = false; } _live[i] = true; }); }
             void _add() { if (_camCount >= 15) return; setState(() => _camCount++); }
@@ -635,7 +665,7 @@ jobs:
               final c = await showModalBottomSheet<int>(context: context, backgroundColor: _panel, builder: (ctx) => SafeArea(child: SizedBox(height: MediaQuery.of(ctx).size.height * 0.75, child: Column(children: [const Padding(padding: EdgeInsets.all(16), child: Text('NUMBER OF CAMERAS', style: TextStyle(color: Colors.white70, fontSize: 12, letterSpacing: 3, fontWeight: FontWeight.w800))), const Divider(height: 1, color: Colors.white12), Expanded(child: ListView.builder(itemCount: 15, itemBuilder: (_, i) { final n = i + 1; return ListTile(title: Text('$n camera${n == 1 ? "" : "s"}', style: const TextStyle(color: Colors.white)), trailing: n == _camCount ? const Icon(Icons.check, color: Colors.tealAccent) : null, onTap: () => Navigator.pop(ctx, n)); }))]))));
               if (c != null) setState(() => _camCount = c);
             }
-            Future<void> _openG() async { setState(() => _menuOpen = false); await Navigator.push(context, MaterialPageRoute(builder: (_) => const GraphicsEditor())); _loadOverlays(); }
+            Future<void> _openG() async { setState(() => _menuOpen = false); await Navigator.push(context, MaterialPageRoute(builder: (_) => GraphicsEditor(serverIp: _serverIp))); _loadOverlays(); }
             void _openA() { setState(() => _menuOpen = false); Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountsScreen())); }
             void _openStudioCanvas() { setState(() => _menuOpen = false); Navigator.push(context, MaterialPageRoute(builder: (_) => const StudioCanvasScreen())); }
             Future<void> _editServer() async {
@@ -685,6 +715,7 @@ jobs:
                   const Text('Broadcast To:', style: TextStyle(color: Colors.tealAccent, fontSize: 12, fontWeight: FontWeight.bold)), const SizedBox(height: 8),
                   ...linkedAccounts.map((acc) { return CheckboxListTile(title: Text('${acc.platform} (${acc.name})', style: const TextStyle(color: Colors.white, fontSize: 12)), value: activePlatforms[acc.id], activeColor: Colors.tealAccent, contentPadding: EdgeInsets.zero, onChanged: (val) { setDialogState(() => activePlatforms[acc.id] = val ?? false); }); }).toList(),
                   CheckboxListTile(title: const Text('Play as Advert (Clean Screen)', style: TextStyle(color: Colors.white, fontSize: 12)), value: isAdvert, activeColor: Colors.tealAccent, contentPadding: EdgeInsets.zero, onChanged: (val) { setDialogState(() => isAdvert = val ?? false); }),
+                  CheckboxListTile(title: const Text('Enable Studio Graphics (Requires 4-Core)', style: TextStyle(color: Colors.white, fontSize: 12)), value: _useGraphics, activeColor: Colors.tealAccent, contentPadding: EdgeInsets.zero, onChanged: (val) { setDialogState(() => _useGraphics = val ?? false); }),
                 ])), actions: [
                   TextButton(onPressed: () async { await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule')); if (ctx.mounted) Navigator.pop(ctx); }, child: const Text('STOP LIVE', style: TextStyle(color: Colors.red))),
                   FilledButton(onPressed: () => Navigator.pop(ctx, 'ADD'), child: const Text('ADD TO QUEUE'))
@@ -695,9 +726,21 @@ jobs:
                 final List<Map<String, dynamic>> scheduleJson = []; for (final line in rawLines) { scheduleJson.add({'url': line.trim(), 'isAdvert': isAdvert, 'duration': 0}); }
                 final List<String> selectedKeys = []; for (var acc in linkedAccounts) { if (activePlatforms[acc.id] == true) { if (acc.platform == 'YouTube' && acc.rtmpUrl.isEmpty) { selectedKeys.add(acc.streamKey); } else { selectedKeys.add('${acc.rtmpUrl}/${acc.streamKey}'); } } }
                 if (selectedKeys.isEmpty) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select at least one platform.'))); return; }
+                
+                final overlaysJson = _useGraphics ? _overlays.map((e) => e.toJson()).toList() : [];
+
                 try {
-                  final response = await http.post(Uri.parse('http://$_serverIp:3000/start-schedule'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'schedule': scheduleJson, 'platforms': selectedKeys, 'logoUrl': _savedLogoUrl ?? "", 'logoPosition': _savedLogoPos ?? "Top Right", 'bannerUrls': _savedBannerUrls ?? [], 'bannerPosition': _savedBannerPos ?? "Bottom Left", 'tickerText': _savedTickerText ?? ""}));
-                  if (mounted) { String msg = 'Action completed'; try { final data = jsonDecode(response.body); if (data['message'] != null) msg = data['message']; } catch(_) { msg = 'Server Status: ${response.statusCode}'; } ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg))); }
+                  final response = await http.post(Uri.parse('http://$_serverIp:3000/start-schedule'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({
+                    'schedule': scheduleJson, 
+                    'platforms': selectedKeys, 
+                    'logoUrl': _useGraphics ? (_savedLogoUrl ?? "") : "", 
+                    'logoPosition': _savedLogoPos ?? "Top Right", 
+                    'bannerUrl': _useGraphics ? (_savedBannerUrls.isNotEmpty ? _savedBannerUrls[0] : "") : "", 
+                    'bannerPosition': _savedBannerPos ?? "Bottom Left", 
+                    'tickerText': _savedTickerText ?? "",
+                    'overlays': overlaysJson
+                  }));
+                  if (mounted) { setState(() => _onAir = true); String msg = 'Action completed'; try { final data = jsonDecode(response.body); if (data['message'] != null) msg = data['message']; } catch(_) { msg = 'Server Status: ${response.statusCode}'; } ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg))); }
                 } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to connect: $e'))); }
               }
             }
@@ -713,8 +756,20 @@ jobs:
               }));
               if (result == 'SCHEDULE' && pickedTime != null) {
                 final hour = pickedTime!.hour.toString().padLeft(2, '0'); final minute = pickedTime!.minute.toString().padLeft(2, '0'); final timeString = "$hour:$minute";
+                final overlaysJson = _overlays.map((e) => e.toJson()).toList();
                 try {
-                  final response = await http.post(Uri.parse('http://$_serverIp:3000/schedule-time'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'time': timeString, 'videoUrl': scheduleCtrl.text.trim(), 'isAdvert': isAdvert, 'platforms': [_savedYtKey ?? ""], 'logoUrl': _savedLogoUrl ?? "", 'logoPosition': _savedLogoPos ?? "Top Right", 'bannerUrls': _savedBannerUrls ?? [], 'bannerPosition': _savedBannerPos ?? "Bottom Left", 'tickerText': _savedTickerText ?? ""}));
+                  final response = await http.post(Uri.parse('http://$_serverIp:3000/schedule-time'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({
+                    'time': timeString, 
+                    'videoUrl': scheduleCtrl.text.trim(), 
+                    'isAdvert': isAdvert, 
+                    'platforms': [_savedYtKey ?? ""], 
+                    'logoUrl': _savedLogoUrl ?? "", 
+                    'logoPosition': _savedLogoPos ?? "Top Right", 
+                    'bannerUrl': _savedBannerUrls.isNotEmpty ? _savedBannerUrls[0] : "", 
+                    'bannerPosition': _savedBannerPos ?? "Bottom Left", 
+                    'tickerText': _savedTickerText ?? "",
+                    'overlays': overlaysJson
+                  }));
                   if (response.statusCode == 200 && mounted) { final msg = jsonDecode(response.body)['message'] ?? 'Video scheduled'; ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg))); }
                 } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to connect: $e'))); }
               }
@@ -746,7 +801,17 @@ jobs:
             Widget _grid() { int c; if (_camCount <= 4) c = 2; else if (_camCount <= 9) c = 3; else if (_camCount <= 12) c = 4; else c = 5; return Padding(padding: const EdgeInsets.all(10), child: GridView.builder(itemCount: _camCount, gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: c, mainAxisSpacing: 6, crossAxisSpacing: 6, childAspectRatio: 16 / 9), itemBuilder: (_, i) { final l = _live[i]; final p = _prev[i]; final bc = l ? _red : (p ? _yellow : _grey); return GestureDetector(onTap: () => _selPrev(i), onLongPress: () => _rm(i), child: Container(decoration: BoxDecoration(color: Colors.black, border: Border.all(color: bc, width: 1.5), borderRadius: BorderRadius.circular(3)), child: Stack(children: [_CameraStream(cameraNumber: i + 1, serverIp: _serverIp), Positioned(bottom: 4, left: 4, child: Text('CAM ${i + 1}', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 2)))]))); })); }
             Widget _bar() {
               return Container(height: 48, color: _bg, padding: const EdgeInsets.symmetric(horizontal: 10), child: Row(children: [
-                GestureDetector(onTap: () => setState(() => _onAir = !_onAir), child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 14), decoration: BoxDecoration(color: _onAir ? _red : const Color(0xFF1E293B), borderRadius: BorderRadius.circular(5)), child: Row(children: [Icon(_onAir ? Icons.stop_circle : Icons.podcasts, color: Colors.white, size: 16), const SizedBox(width: 6), Text(_onAir ? 'END STREAM' : 'GO LIVE', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.2))]))),
+                GestureDetector(
+                  onTap: () async {
+                    if (_onAir) {
+                      try { await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule')); setState(() => _onAir = false); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); }
+                    } else {
+                      setState(() => _menuOpen = true);
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Use "Add to TV Schedule" to go live!')));
+                    }
+                  }, 
+                  child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 14), decoration: BoxDecoration(color: _onAir ? _red : const Color(0xFF1E293B), borderRadius: BorderRadius.circular(5)), child: Row(children: [Icon(_onAir ? Icons.stop_circle : Icons.podcasts, color: Colors.white, size: 16), const SizedBox(width: 6), Text(_onAir ? 'END STREAM' : 'GO LIVE', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.2))]))
+                ),
                 const SizedBox(width: 8),
                 GestureDetector(onTap: () => setState(() => _showLiveCamera = !_showLiveCamera), child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 10), decoration: BoxDecoration(color: _showLiveCamera ? _blue.withOpacity(0.3) : Colors.white10, borderRadius: BorderRadius.circular(5), border: Border.all(color: _showLiveCamera ? _blue : Colors.white24)), child: Row(children: [Icon(_showLiveCamera ? Icons.videocam : Icons.videocam_off, color: _showLiveCamera ? _blue : Colors.white54, size: 14), const SizedBox(width: 4), Text('LIVE CAM', style: TextStyle(color: _showLiveCamera ? _blue : Colors.white54, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1))]))),
                 const SizedBox(width: 8),
@@ -786,7 +851,7 @@ jobs:
           distributionPath=wrapper/dists
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-9.5.0-all.zip
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.9-all.zip
           E
 
           cat > android/settings.gradle << 'E'
@@ -803,8 +868,8 @@ jobs:
           }
           plugins {
               id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-              id "com.android.application" version "9.0.1" apply false
-              id "org.jetbrains.kotlin.android" version "2.3.20" apply false
+              id "com.android.application" version "8.9.1" apply false
+              id "org.jetbrains.kotlin.android" version "1.9.24" apply false
           }
           include ":app"
           E
@@ -824,8 +889,8 @@ jobs:
                   if (project.plugins.hasPlugin("com.android.application") ||
                       project.plugins.hasPlugin("com.android.library")) {
                       project.android {
-                          compileSdkVersion 37
-                          buildToolsVersion "37.0.0"
+                          compileSdkVersion 34
+                          buildToolsVersion "34.0.0"
                       }
                   }
               }
@@ -843,8 +908,8 @@ jobs:
 
           android {
               namespace "com.yourcompany.mobile_tv_studio"
-              compileSdk 37
-              ndkVersion "28.2.13676358"
+              compileSdk 34
+              ndkVersion "25.1.8937393"
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_17
                   targetCompatibility JavaVersion.VERSION_17
@@ -853,7 +918,7 @@ jobs:
               defaultConfig {
                   applicationId "com.yourcompany.mobile_tv_studio"
                   minSdk 24
-                  targetSdk 37
+                  targetSdk 34
                   versionCode 1
                   versionName "1.0"
               }
