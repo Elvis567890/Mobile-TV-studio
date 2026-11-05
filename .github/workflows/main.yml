@@ -851,7 +851,7 @@ jobs:
           distributionPath=wrapper/dists
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-8.9-all.zip
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.11.1-all.zip
           E
 
           cat > android/settings.gradle << 'E'
