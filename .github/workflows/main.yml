@@ -59,6 +59,7 @@ jobs:
             http: ^1.2.0
             video_player: ^2.9.1
             webview_flutter: ^4.7.0
+            file_picker: ^8.0.0
           dev_dependencies:
             flutter_test:
               sdk: flutter
@@ -100,7 +101,7 @@ jobs:
               DeviceOrientation.portraitUp, DeviceOrientation.portraitDown,
               DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight,
             ]);
-            await [Permission.camera, Permission.microphone, Permission.notification].request();
+            await [Permission.camera, Permission.microphone, Permission.notification, Permission.storage].request();
             runApp(const App());
           }
           class App extends StatelessWidget {
@@ -171,7 +172,6 @@ jobs:
           cat > lib/services/streaming_service.dart << 'D'
           import 'package:rtmp_broadcaster/rtmp_broadcaster.dart';
           import 'package:mic_info/mic_info.dart';
-          import 'package:flutter/material.dart';
           class StreamingService {
             static CameraController? _controller; static bool _isStreaming = false; static bool _isRecording = false; static bool _isMicMuted = false;
             static CameraController? get controller => _controller; static bool get isStreaming => _isStreaming; static bool get isRecording => _isRecording; static bool get isMicMuted => _isMicMuted;
@@ -253,6 +253,106 @@ jobs:
               if (_error != null) { return Container(color: Colors.black, child: Center(child: Text(_error!, style: const TextStyle(color: Colors.redAccent, fontSize: 11)))); }
               if (!_ready || _ctrl == null) { return Container(color: Colors.black, child: const Center(child: CircularProgressIndicator(color: Colors.redAccent))); }
               return Center(child: CameraPreview(_ctrl!));
+            }
+          }
+          D
+
+          # ─── lib/screens/library_screen.dart (NEW) ───
+          cat > lib/screens/library_screen.dart << 'D'
+          import 'package:flutter/material.dart';
+          import 'package:file_picker/file_picker.dart';
+          import 'package:http/http.dart' as http;
+          import 'dart:convert';
+          import 'dart:io';
+          import 'package:shared_preferences/shared_preferences.dart';
+
+          class LibraryScreen extends StatefulWidget {
+            final String serverIp;
+            const LibraryScreen({super.key, required this.serverIp});
+            @override State<LibraryScreen> createState() => _LibraryScreenState();
+          }
+          class _LibraryScreenState extends State<LibraryScreen> {
+            List<dynamic> _videos = [];
+            bool _isLoading = false;
+            bool _isUploading = false;
+            String _userId = "edger_user"; // In production, fetch actual user ID
+
+            @override void initState() { super.initState(); _fetchLibrary(); }
+
+            Future<void> _fetchLibrary() async {
+              setState(() => _isLoading = true);
+              try {
+                final res = await http.get(Uri.parse('http://${widget.serverIp}:3000/library/$_userId'));
+                if (res.statusCode == 200) {
+                  setState(() => _videos = jsonDecode(res.body));
+                }
+              } catch (e) { debugPrint('Error fetching library: $e'); }
+              setState(() => _isLoading = false);
+            }
+
+            Future<void> _uploadVideo() async {
+              FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.video);
+              if (result != null && result.files.single.path != null) {
+                setState(() => _isUploading = true);
+                final file = File(result.files.single.path!);
+                final fileName = result.files.single.name;
+
+                var request = http.MultipartRequest('POST', Uri.parse('http://${widget.serverIp}:3000/upload-video'));
+                request.headers['x-user-id'] = _userId;
+                request.files.add(await http.MultipartFile.fromPath('video', file.path, filename: fileName));
+
+                try {
+                  var streamedResponse = await request.send();
+                  var response = await http.Response.fromStream(streamedResponse);
+                  if (response.statusCode == 200) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Video permanently saved to Library!')));
+                    _fetchLibrary();
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Upload failed')));
+                  }
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                }
+                setState(() => _isUploading = false);
+              }
+            }
+
+            @override Widget build(BuildContext context) {
+              return Scaffold(
+                backgroundColor: const Color(0xFF0A0A0F),
+                appBar: AppBar(title: const Text('MY LIBRARY', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)), backgroundColor: const Color(0xFF141418)),
+                body: Column(children: [
+                  if (_isUploading) const LinearProgressIndicator(color: Colors.tealAccent),
+                  Expanded(
+                    child: _isLoading ? const Center(child: CircularProgressIndicator(color: Colors.tealAccent)) :
+                    _videos.isEmpty ? const Center(child: Text('No videos in library.\nUpload one to get started!', textAlign: TextAlign.center, style: TextStyle(color: Colors.white54))) :
+                    ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: _videos.length,
+                      itemBuilder: (ctx, i) {
+                        final v = _videos[i];
+                        return Card(
+                          color: const Color(0xFF141418),
+                          child: ListTile(
+                            leading: const Icon(Icons.video_file, color: Colors.tealAccent),
+                            title: Text(v['name'] ?? 'Unknown Video', style: const TextStyle(color: Colors.white)),
+                            subtitle: const Text('Saved safely in Cloud', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                            trailing: IconButton(icon: const Icon(Icons.calendar_month, color: Colors.blueAccent), onPressed: () {
+                              // We can add a scheduling shortcut here later
+                            }),
+                          ),
+                        );
+                      }
+                    )
+                  )
+                ]),
+                floatingActionButton: FloatingActionButton.extended(
+                  onPressed: _isUploading ? null : _uploadVideo,
+                  backgroundColor: Colors.tealAccent,
+                  icon: const Icon(Icons.upload, color: Colors.black),
+                  label: const Text('UPLOAD VIDEO', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                ),
+              );
             }
           }
           D
@@ -603,17 +703,16 @@ jobs:
           }
           D
 
-          # ─── lib/screens/director_screen.dart ───
+          # ─── lib/screens/director_screen.dart (MODIFIED FOR LIBRARY) ───
           cat > lib/screens/director_screen.dart << 'D'
           import 'dart:async';
           import 'dart:convert';
           import 'package:flutter/material.dart';
-          import 'package:flutter_webrtc/flutter_webrtc.dart';
           import 'package:http/http.dart' as http;
           import 'package:video_player/video_player.dart';
           import 'package:shared_preferences/shared_preferences.dart';
           import 'package:webview_flutter/webview_flutter.dart';
-          import '../models/overlay_item.dart'; import '../models/account_item.dart'; import '../services/overlay_store.dart'; import '../services/account_store.dart'; import '../widgets/overlay_renderer.dart'; import '../widgets/live_camera.dart'; import 'graphics_editor.dart'; import 'accounts_screen.dart'; import 'studio_canvas_screen.dart';
+          import '../models/overlay_item.dart'; import '../models/account_item.dart'; import '../services/overlay_store.dart'; import '../services/account_store.dart'; import '../widgets/overlay_renderer.dart'; import '../widgets/live_camera.dart'; import 'graphics_editor.dart'; import 'accounts_screen.dart'; import 'studio_canvas_screen.dart'; import 'library_screen.dart';
           const _bg = Color(0xFF0A0A0F); const _panel = Color(0xFF141418); const _red = Color(0xFFEF4444); const _yellow = Color(0xFFF5C542); const _blue = Color(0xFF3B82F6); const _grey = Color(0x14FFFFFF);
           class DirectorScreen extends StatefulWidget { const DirectorScreen({super.key}); @override State<DirectorScreen> createState() => _DirectorScreenState(); }
           class _DirectorScreenState extends State<DirectorScreen> {
@@ -667,6 +766,7 @@ jobs:
             }
             Future<void> _openG() async { setState(() => _menuOpen = false); await Navigator.push(context, MaterialPageRoute(builder: (_) => GraphicsEditor(serverIp: _serverIp))); _loadOverlays(); }
             void _openA() { setState(() => _menuOpen = false); Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountsScreen())); }
+            void _openLibrary() { setState(() => _menuOpen = false); Navigator.push(context, MaterialPageRoute(builder: (_) => LibraryScreen(serverIp: _serverIp))); }
             void _openStudioCanvas() { setState(() => _menuOpen = false); Navigator.push(context, MaterialPageRoute(builder: (_) => const StudioCanvasScreen())); }
             Future<void> _editServer() async {
               final ctrl = TextEditingController(text: _serverIp);
@@ -708,67 +808,79 @@ jobs:
               final store = AccountStore(); final linkedAccounts = await store.loadAll();
               if (linkedAccounts.isEmpty) { linkedAccounts.add(AccountItem(id: 'default', platform: 'YouTube', name: 'Default YouTube', streamKey: _savedYtKey, rtmpUrl: '')); }
               Map<String, bool> activePlatforms = {}; for (var acc in linkedAccounts) { activePlatforms[acc.id] = true; }
-              final scheduleCtrl = TextEditingController(); bool isAdvert = false;
+              
+              // Fetch library for this user
+              List<dynamic> library = [];
+              try { final res = await http.get(Uri.parse('http://$_serverIp:3000/library/edger_user')); if (res.statusCode == 200) library = jsonDecode(res.body); } catch (e) { debugPrint('Error fetching library: $e'); }
+              
+              String? selectedVideoId; String? selectedVideoName;
+              
               final result = await showDialog<String>(context: context, builder: (ctx) => StatefulBuilder(builder: (context, setDialogState) {
-                return AlertDialog(backgroundColor: _panel, title: const Text('Add Video', style: TextStyle(color: Colors.white, fontSize: 16)), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  const Text('Video URL(s) (One per line):', style: TextStyle(color: Colors.white70, fontSize: 12)), TextField(controller: scheduleCtrl, maxLines: 4, style: const TextStyle(color: Colors.white, fontSize: 12), decoration: const InputDecoration(hintText: 'https://link.com/video.mp4', hintStyle: TextStyle(color: Colors.white24))), const SizedBox(height: 12),
+                return AlertDialog(backgroundColor: _panel, title: const Text('Select Video from Library', style: TextStyle(color: Colors.white, fontSize: 16)), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('Choose Video:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  DropdownButton<String>(
+                    isExpanded: true,
+                    dropdownColor: _panel,
+                    hint: const Text('Select a video', style: TextStyle(color: Colors.white54)),
+                    value: selectedVideoId,
+                    items: library.map((v) => DropdownMenuItem<String>(value: v['telegram_message_id'].toString(), child: Text(v['name'], style: const TextStyle(color: Colors.white, fontSize: 12)))).toList(),
+                    onChanged: (val) { setDialogState(() { selectedVideoId = val; selectedVideoName = library.firstWhere((v) => v['telegram_message_id'].toString() == val)['name']; }); }
+                  ),
+                  const SizedBox(height: 12),
                   const Text('Broadcast To:', style: TextStyle(color: Colors.tealAccent, fontSize: 12, fontWeight: FontWeight.bold)), const SizedBox(height: 8),
                   ...linkedAccounts.map((acc) { return CheckboxListTile(title: Text('${acc.platform} (${acc.name})', style: const TextStyle(color: Colors.white, fontSize: 12)), value: activePlatforms[acc.id], activeColor: Colors.tealAccent, contentPadding: EdgeInsets.zero, onChanged: (val) { setDialogState(() => activePlatforms[acc.id] = val ?? false); }); }).toList(),
-                  CheckboxListTile(title: const Text('Play as Advert (Clean Screen)', style: TextStyle(color: Colors.white, fontSize: 12)), value: isAdvert, activeColor: Colors.tealAccent, contentPadding: EdgeInsets.zero, onChanged: (val) { setDialogState(() => isAdvert = val ?? false); }),
-                  CheckboxListTile(title: const Text('Enable Studio Graphics (Requires 4-Core)', style: TextStyle(color: Colors.white, fontSize: 12)), value: _useGraphics, activeColor: Colors.tealAccent, contentPadding: EdgeInsets.zero, onChanged: (val) { setDialogState(() => _useGraphics = val ?? false); }),
                 ])), actions: [
                   TextButton(onPressed: () async { await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule')); if (ctx.mounted) Navigator.pop(ctx); }, child: const Text('STOP LIVE', style: TextStyle(color: Colors.red))),
-                  FilledButton(onPressed: () => Navigator.pop(ctx, 'ADD'), child: const Text('ADD TO QUEUE'))
+                  FilledButton(onPressed: () { if (selectedVideoId == null) return; Navigator.pop(ctx, 'ADD'); }, child: const Text('PLAY NOW'))
                 ]);
               }));
-              if (result == 'ADD') {
-                final rawLines = scheduleCtrl.text.split('\n').where((u) => u.trim().isNotEmpty).toList(); if (rawLines.isEmpty) return;
-                final List<Map<String, dynamic>> scheduleJson = []; for (final line in rawLines) { scheduleJson.add({'url': line.trim(), 'isAdvert': isAdvert, 'duration': 0}); }
+              
+              if (result == 'ADD' && selectedVideoId != null) {
                 final List<String> selectedKeys = []; for (var acc in linkedAccounts) { if (activePlatforms[acc.id] == true) { if (acc.platform == 'YouTube' && acc.rtmpUrl.isEmpty) { selectedKeys.add(acc.streamKey); } else { selectedKeys.add('${acc.rtmpUrl}/${acc.streamKey}'); } } }
                 if (selectedKeys.isEmpty) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select at least one platform.'))); return; }
                 
-                final overlaysJson = _useGraphics ? _overlays.map((e) => e.toJson()).toList() : [];
-
                 try {
-                  final response = await http.post(Uri.parse('http://$_serverIp:3000/start-schedule'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({
-                    'schedule': scheduleJson, 
-                    'platforms': selectedKeys, 
-                    'logoUrl': _useGraphics ? (_savedLogoUrl ?? "") : "", 
-                    'logoPosition': _savedLogoPos ?? "Top Right", 
-                    'bannerUrl': _useGraphics ? (_savedBannerUrls.isNotEmpty ? _savedBannerUrls[0] : "") : "", 
-                    'bannerPosition': _savedBannerPos ?? "Bottom Left", 
-                    'tickerText': _savedTickerText ?? "",
-                    'overlays': overlaysJson
+                  final response = await http.post(Uri.parse('http://$_serverIp:3000/play-now'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({
+                    'video': {'telegram_message_id': selectedVideoId, 'name': selectedVideoName},
+                    'platforms': selectedKeys
                   }));
-                  if (mounted) { setState(() => _onAir = true); String msg = 'Action completed'; try { final data = jsonDecode(response.body); if (data['message'] != null) msg = data['message']; } catch(_) { msg = 'Server Status: ${response.statusCode}'; } ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg))); }
+                  if (mounted) { setState(() => _onAir = true); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Playing from Library!'))); }
                 } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to connect: $e'))); }
               }
             }
             Future<void> _scheduleTimedVideo() async {
               if (_savedYtKey.isEmpty) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please set your Stream Settings first!'))); _openStreamSettings(); return; }
-              final scheduleCtrl = TextEditingController(); TimeOfDay? pickedTime; bool isAdvert = false;
+              TimeOfDay? pickedTime;
+              
+              List<dynamic> library = [];
+              try { final res = await http.get(Uri.parse('http://$_serverIp:3000/library/edger_user')); if (res.statusCode == 200) library = jsonDecode(res.body); } catch (e) { debugPrint('Error fetching library: $e'); }
+              
+              String? selectedVideoId; String? selectedVideoName;
+
               final result = await showDialog<String>(context: context, builder: (ctx) => StatefulBuilder(builder: (context, setDialogState) {
                 return AlertDialog(backgroundColor: _panel, title: const Text('Schedule Video at Exact Time', style: TextStyle(color: Colors.white, fontSize: 16)), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  const Text('Video URL:', style: TextStyle(color: Colors.white70, fontSize: 12)), TextField(controller: scheduleCtrl, style: const TextStyle(color: Colors.white, fontSize: 12), decoration: const InputDecoration(hintText: 'https://link.com/movie.mp4', hintStyle: TextStyle(color: Colors.white24))), const SizedBox(height: 16),
+                  const Text('Choose Video from Library:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  DropdownButton<String>(
+                    isExpanded: true,
+                    dropdownColor: _panel,
+                    hint: const Text('Select a video', style: TextStyle(color: Colors.white54)),
+                    value: selectedVideoId,
+                    items: library.map((v) => DropdownMenuItem<String>(value: v['telegram_message_id'].toString(), child: Text(v['name'], style: const TextStyle(color: Colors.white, fontSize: 12)))).toList(),
+                    onChanged: (val) { setDialogState(() { selectedVideoId = val; selectedVideoName = library.firstWhere((v) => v['telegram_message_id'].toString() == val)['name']; }); }
+                  ),
+                  const SizedBox(height: 16),
                   ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent), onPressed: () async { final time = await showTimePicker(context: context, initialTime: TimeOfDay.now()); if (time != null) { setDialogState(() => pickedTime = time); } }, icon: const Icon(Icons.access_time), label: Text(pickedTime == null ? 'Select Time' : 'Time: ${pickedTime!.format(context)}')),
-                  CheckboxListTile(title: const Text('Play as Advert (Clean Screen)', style: TextStyle(color: Colors.white, fontSize: 12)), value: isAdvert, activeColor: Colors.tealAccent, contentPadding: EdgeInsets.zero, onChanged: (val) { setDialogState(() => isAdvert = val ?? false); }),
-                ])), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('CANCEL')), FilledButton(onPressed: () { if (pickedTime == null || scheduleCtrl.text.trim().isEmpty) return; Navigator.pop(ctx, 'SCHEDULE'); }, child: const Text('SCHEDULE'))]);
+                ])), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('CANCEL')), FilledButton(onPressed: () { if (pickedTime == null || selectedVideoId == null) return; Navigator.pop(ctx, 'SCHEDULE'); }, child: const Text('SCHEDULE'))]);
               }));
-              if (result == 'SCHEDULE' && pickedTime != null) {
+              
+              if (result == 'SCHEDULE' && pickedTime != null && selectedVideoId != null) {
                 final hour = pickedTime!.hour.toString().padLeft(2, '0'); final minute = pickedTime!.minute.toString().padLeft(2, '0'); final timeString = "$hour:$minute";
-                final overlaysJson = _overlays.map((e) => e.toJson()).toList();
                 try {
                   final response = await http.post(Uri.parse('http://$_serverIp:3000/schedule-time'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({
                     'time': timeString, 
-                    'videoUrl': scheduleCtrl.text.trim(), 
-                    'isAdvert': isAdvert, 
-                    'platforms': [_savedYtKey ?? ""], 
-                    'logoUrl': _savedLogoUrl ?? "", 
-                    'logoPosition': _savedLogoPos ?? "Top Right", 
-                    'bannerUrl': _savedBannerUrls.isNotEmpty ? _savedBannerUrls[0] : "", 
-                    'bannerPosition': _savedBannerPos ?? "Bottom Left", 
-                    'tickerText': _savedTickerText ?? "",
-                    'overlays': overlaysJson
+                    'videoId': selectedVideoId,
+                    'videoName': selectedVideoName,
+                    'platforms': ['rtmp://a.rtmp.youtube.com/live2/$_savedYtKey'], // Modify as needed for linked accounts
                   }));
                   if (response.statusCode == 200 && mounted) { final msg = jsonDecode(response.body)['message'] ?? 'Video scheduled'; ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg))); }
                 } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to connect: $e'))); }
@@ -822,7 +934,7 @@ jobs:
             }
             Widget _menu() { return Positioned(top: 0, right: 0, bottom: 0, child: Container(width: 220, color: _bg, child: Column(children: [
                 Container(height: 40, padding: const EdgeInsets.symmetric(horizontal: 12), decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: _grey))), child: Row(children: [const Text('Menu', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800)), const Spacer(), GestureDetector(onTap: () => setState(() => _menuOpen = false), child: const Icon(Icons.close, color: Colors.white, size: 16))])),
-                _mi(Icons.dns, 'Server IP ($_serverIp)', _editServer), _mi(Icons.grid_view, 'Camera Count', () { setState(() => _menuOpen = false); _pick(); }), _mi(Icons.add, 'Add Camera', () { setState(() => _menuOpen = false); _add(); }), _mi(Icons.layers, 'Graphics', _openG, teal: true), _mi(Icons.link, 'Link Accounts', _openA), _mi(Icons.movie, 'Studio Canvas (Video + Cam)', _openStudioCanvas, teal: true), _mi(Icons.settings, 'Stream Settings (Key/Logos)', () { setState(() => _menuOpen = false); _openStreamSettings(); }), _mi(Icons.power_settings_new, 'Add to TV Schedule', _startAutomatedBroadcast, teal: true), _mi(Icons.schedule, 'Schedule at Exact Time', () { setState(() => _menuOpen = false); _scheduleTimedVideo(); }, teal: true),
+                _mi(Icons.dns, 'Server IP ($_serverIp)', _editServer), _mi(Icons.grid_view, 'Camera Count', () { setState(() => _menuOpen = false); _pick(); }), _mi(Icons.add, 'Add Camera', () { setState(() => _menuOpen = false); _add(); }), _mi(Icons.layers, 'Graphics', _openG, teal: true), _mi(Icons.link, 'Link Accounts', _openA), _mi(Icons.video_library, 'My Library (Upload Videos)', _openLibrary, teal: true), _mi(Icons.movie, 'Studio Canvas (Video + Cam)', _openStudioCanvas, teal: true), _mi(Icons.settings, 'Stream Settings (Key/Logos)', () { setState(() => _menuOpen = false); _openStreamSettings(); }), _mi(Icons.power_settings_new, 'Play from Library', _startAutomatedBroadcast, teal: true), _mi(Icons.schedule, 'Schedule at Exact Time', () { setState(() => _menuOpen = false); _scheduleTimedVideo(); }, teal: true),
             ]))); }
             Widget _mi(IconData icon, String label, VoidCallback onTap, {bool teal = false}) { return InkWell(onTap: onTap, child: SizedBox(height: 38, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Row(children: [Icon(icon, color: teal ? Colors.tealAccent : Colors.white70, size: 16), const SizedBox(width: 10), Expanded(child: Text(label, style: TextStyle(color: teal ? Colors.tealAccent : Colors.white, fontSize: 11, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis))])))); }
           }
