@@ -97,10 +97,7 @@ jobs:
 
           void main() async {
             WidgetsFlutterBinding.ensureInitialized();
-            await SystemChrome.setPreferredOrientations([
-              DeviceOrientation.portraitUp, DeviceOrientation.portraitDown,
-              DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight,
-            ]);
+            await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp, DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
             await [Permission.camera, Permission.microphone, Permission.notification, Permission.storage].request();
             runApp(const App());
           }
@@ -108,11 +105,7 @@ jobs:
             const App({super.key});
             @override
             Widget build(BuildContext context) {
-              return MaterialApp(
-                debugShowCheckedModeBanner: false, title: 'abrimax',
-                theme: ThemeData(useMaterial3: true, brightness: Brightness.dark, scaffoldBackgroundColor: const Color(0xFF0A0A0F)),
-                home: const RoleChooser(),
-              );
+              return MaterialApp(debugShowCheckedModeBanner: false, title: 'abrimax', theme: ThemeData(useMaterial3: true, brightness: Brightness.dark, scaffoldBackgroundColor: const Color(0xFF0A0A0F)), home: const RoleChooser());
             }
           }
           D
@@ -145,10 +138,7 @@ jobs:
           import '../models/overlay_item.dart';
           class OverlayStore {
             static const _key = 'overlays_v1';
-            Future<List<OverlayItem>> loadAll() async {
-              final p = await SharedPreferences.getInstance(); final raw = p.getString(_key); if (raw == null || raw.isEmpty) return [];
-              try { return (jsonDecode(raw) as List).map((e) => OverlayItem.fromJson(e)).toList(); } catch (_) { return []; }
-            }
+            Future<List<OverlayItem>> loadAll() async { final p = await SharedPreferences.getInstance(); final raw = p.getString(_key); if (raw == null || raw.isEmpty) return []; try { return (jsonDecode(raw) as List).map((e) => OverlayItem.fromJson(e)).toList(); } catch (_) { return []; } }
             Future<void> saveAll(List<OverlayItem> items) async { final p = await SharedPreferences.getInstance(); await p.setString(_key, jsonEncode(items.map((e) => e.toJson()).toList())); }
           }
           D
@@ -160,10 +150,7 @@ jobs:
           import '../models/account_item.dart';
           class AccountStore {
             static const _key = 'accounts_v1';
-            Future<List<AccountItem>> loadAll() async {
-              final p = await SharedPreferences.getInstance(); final raw = p.getString(_key); if (raw == null || raw.isEmpty) return [];
-              try { return (jsonDecode(raw) as List).map((e) => AccountItem.fromJson(e)).toList(); } catch (_) { return []; }
-            }
+            Future<List<AccountItem>> loadAll() async { final p = await SharedPreferences.getInstance(); final raw = p.getString(_key); if (raw == null || raw.isEmpty) return []; try { return (jsonDecode(raw) as List).map((e) => AccountItem.fromJson(e)).toList(); } catch (_) { return []; } }
             Future<void> saveAll(List<AccountItem> items) async { final p = await SharedPreferences.getInstance(); await p.setString(_key, jsonEncode(items.map((e) => e.toJson()).toList())); }
           }
           D
@@ -183,7 +170,7 @@ jobs:
             }
             static Future<List<String>> detectUsbMics() async { try { final mics = await MicInfo.getWiredMicrophones(); return mics.map((m) => m.productName).toList(); } catch (_) { return []; } }
             static Future<void> startStreamToServer(String path, String serverIp) async {
-              if (_controller == null) return; final url = 'rtmp://$serverIp:1935/$path';
+              if (_controller == null) return; final url = 'rtmp://$serverIp:1935/live/$path';
               await _controller!.prepareForVideoRecording(); await _controller!.startVideoStreaming(url, bitrate: 2500 * 1024, androidUseOpenGL: false); _isStreaming = true;
             }
             static Future<void> stopStream() async { if (_controller == null) return; await _controller!.stopEverything(); _isStreaming = false; }
@@ -218,12 +205,8 @@ jobs:
               });
             }
             Widget _item(OverlayItem o) {
-              if (o.kind == OverlayKind.liveBadge) {
-                return Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: Color(o.color), borderRadius: BorderRadius.circular(4)), child: Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 8, height: 8, decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle)), const SizedBox(width: 6), Text(o.content, style: TextStyle(color: Colors.white, fontSize: o.size, fontWeight: FontWeight.w900, letterSpacing: 2))]));
-              }
-              if (o.kind == OverlayKind.lowerThird) {
-                return Container(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10), decoration: BoxDecoration(color: Color(o.color), borderRadius: BorderRadius.circular(2)), child: Text(o.content, style: TextStyle(color: Colors.white, fontSize: o.size, fontWeight: FontWeight.bold)));
-              }
+              if (o.kind == OverlayKind.liveBadge) { return Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: Color(o.color), borderRadius: BorderRadius.circular(4)), child: Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 8, height: 8, decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle)), const SizedBox(width: 6), Text(o.content, style: TextStyle(color: Colors.white, fontSize: o.size, fontWeight: FontWeight.w900, letterSpacing: 2))])); }
+              if (o.kind == OverlayKind.lowerThird) { return Container(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10), decoration: BoxDecoration(color: Color(o.color), borderRadius: BorderRadius.circular(2)), child: Text(o.content, style: TextStyle(color: Colors.white, fontSize: o.size, fontWeight: FontWeight.bold))); }
               return Text(o.content, style: TextStyle(color: Color(o.color), fontSize: o.size, fontWeight: FontWeight.w900, letterSpacing: 1, shadows: const [Shadow(blurRadius: 4, color: Colors.black)]));
             }
           }
@@ -240,31 +223,21 @@ jobs:
             CameraController? _ctrl; bool _ready = false; String? _error;
             @override void initState() { super.initState(); _init(); }
             Future<void> _init() async {
-              try {
-                final cams = await availableCameras(); if (cams.isEmpty) { setState(() => _error = 'No cameras'); return; }
-                final lens = widget.front ? CameraLensDirection.front : CameraLensDirection.back; final cam = cams.firstWhere((c) => c.lensDirection == lens, orElse: () => cams.first);
-                _ctrl = CameraController(cam, ResolutionPreset.high, enableAudio: false); await _ctrl!.initialize();
-                try { await _ctrl!.setZoomLevel(1.0); } catch(_) {} if (mounted) setState(() => _ready = true);
-              } catch (e) { if (mounted) setState(() => _error = e.toString()); }
+              try { final cams = await availableCameras(); if (cams.isEmpty) { setState(() => _error = 'No cameras'); return; } final lens = widget.front ? CameraLensDirection.front : CameraLensDirection.back; final cam = cams.firstWhere((c) => c.lensDirection == lens, orElse: () => cams.first); _ctrl = CameraController(cam, ResolutionPreset.high, enableAudio: false); await _ctrl!.initialize(); try { await _ctrl!.setZoomLevel(1.0); } catch(_) {} if (mounted) setState(() => _ready = true); } catch (e) { if (mounted) setState(() => _error = e.toString()); }
             }
             @override void didUpdateWidget(covariant LiveCamera old) { super.didUpdateWidget(old); if (old.front != widget.front) { _ctrl?.dispose(); _ready = false; _init(); } }
             @override void dispose() { _ctrl?.dispose(); super.dispose(); }
-            @override Widget build(BuildContext context) {
-              if (_error != null) { return Container(color: Colors.black, child: Center(child: Text(_error!, style: const TextStyle(color: Colors.redAccent, fontSize: 11)))); }
-              if (!_ready || _ctrl == null) { return Container(color: Colors.black, child: const Center(child: CircularProgressIndicator(color: Colors.redAccent))); }
-              return Center(child: CameraPreview(_ctrl!));
-            }
+            @override Widget build(BuildContext context) { if (_error != null) { return Container(color: Colors.black, child: Center(child: Text(_error!, style: const TextStyle(color: Colors.redAccent, fontSize: 11)))); } if (!_ready || _ctrl == null) { return Container(color: Colors.black, child: const Center(child: CircularProgressIndicator(color: Colors.redAccent))); } return Center(child: CameraPreview(_ctrl!)); }
           }
           D
 
-          # ─── lib/screens/library_screen.dart (NEW) ───
+          # ─── lib/screens/library_screen.dart ───
           cat > lib/screens/library_screen.dart << 'D'
           import 'package:flutter/material.dart';
           import 'package:file_picker/file_picker.dart';
           import 'package:http/http.dart' as http;
           import 'dart:convert';
           import 'dart:io';
-          import 'package:shared_preferences/shared_preferences.dart';
 
           class LibraryScreen extends StatefulWidget {
             final String serverIp;
@@ -275,18 +248,13 @@ jobs:
             List<dynamic> _videos = [];
             bool _isLoading = false;
             bool _isUploading = false;
-            String _userId = "edger_user"; // In production, fetch actual user ID
+            String _userId = "edger_user";
 
             @override void initState() { super.initState(); _fetchLibrary(); }
 
             Future<void> _fetchLibrary() async {
               setState(() => _isLoading = true);
-              try {
-                final res = await http.get(Uri.parse('http://${widget.serverIp}:3000/library/$_userId'));
-                if (res.statusCode == 200) {
-                  setState(() => _videos = jsonDecode(res.body));
-                }
-              } catch (e) { debugPrint('Error fetching library: $e'); }
+              try { final res = await http.get(Uri.parse('http://${widget.serverIp}:3000/library/$_userId')); if (res.statusCode == 200) { setState(() => _videos = jsonDecode(res.body)); } } catch (e) { debugPrint('Error: $e'); }
               setState(() => _isLoading = false);
             }
 
@@ -296,23 +264,14 @@ jobs:
                 setState(() => _isUploading = true);
                 final file = File(result.files.single.path!);
                 final fileName = result.files.single.name;
-
                 var request = http.MultipartRequest('POST', Uri.parse('http://${widget.serverIp}:3000/upload-video'));
                 request.headers['x-user-id'] = _userId;
                 request.files.add(await http.MultipartFile.fromPath('video', file.path, filename: fileName));
-
                 try {
                   var streamedResponse = await request.send();
                   var response = await http.Response.fromStream(streamedResponse);
-                  if (response.statusCode == 200) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Video permanently saved to Library!')));
-                    _fetchLibrary();
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Upload failed')));
-                  }
-                } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
-                }
+                  if (response.statusCode == 200) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Video robbed to Cloud!'))); _fetchLibrary(); } else { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Upload failed'))); }
+                } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'))); }
                 setState(() => _isUploading = false);
               }
             }
@@ -323,35 +282,9 @@ jobs:
                 appBar: AppBar(title: const Text('MY LIBRARY', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)), backgroundColor: const Color(0xFF141418)),
                 body: Column(children: [
                   if (_isUploading) const LinearProgressIndicator(color: Colors.tealAccent),
-                  Expanded(
-                    child: _isLoading ? const Center(child: CircularProgressIndicator(color: Colors.tealAccent)) :
-                    _videos.isEmpty ? const Center(child: Text('No videos in library.\nUpload one to get started!', textAlign: TextAlign.center, style: TextStyle(color: Colors.white54))) :
-                    ListView.builder(
-                      padding: const EdgeInsets.all(12),
-                      itemCount: _videos.length,
-                      itemBuilder: (ctx, i) {
-                        final v = _videos[i];
-                        return Card(
-                          color: const Color(0xFF141418),
-                          child: ListTile(
-                            leading: const Icon(Icons.video_file, color: Colors.tealAccent),
-                            title: Text(v['name'] ?? 'Unknown Video', style: const TextStyle(color: Colors.white)),
-                            subtitle: const Text('Saved safely in Cloud', style: TextStyle(color: Colors.white54, fontSize: 12)),
-                            trailing: IconButton(icon: const Icon(Icons.calendar_month, color: Colors.blueAccent), onPressed: () {
-                              // We can add a scheduling shortcut here later
-                            }),
-                          ),
-                        );
-                      }
-                    )
-                  )
+                  Expanded(child: _isLoading ? const Center(child: CircularProgressIndicator(color: Colors.tealAccent)) : _videos.isEmpty ? const Center(child: Text('No videos. Upload!', style: TextStyle(color: Colors.white54))) : ListView.builder(padding: const EdgeInsets.all(12), itemCount: _videos.length, itemBuilder: (ctx, i) { final v = _videos[i]; return Card(color: const Color(0xFF141418), child: ListTile(leading: const Icon(Icons.video_file, color: Colors.tealAccent), title: Text(v['name'] ?? 'Unknown', style: const TextStyle(color: Colors.white)), subtitle: const Text('In Cloud', style: TextStyle(color: Colors.white54, fontSize: 12)))); }))
                 ]),
-                floatingActionButton: FloatingActionButton.extended(
-                  onPressed: _isUploading ? null : _uploadVideo,
-                  backgroundColor: Colors.tealAccent,
-                  icon: const Icon(Icons.upload, color: Colors.black),
-                  label: const Text('UPLOAD VIDEO', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-                ),
+                floatingActionButton: FloatingActionButton.extended(onPressed: _isUploading ? null : _uploadVideo, backgroundColor: Colors.tealAccent, icon: const Icon(Icons.upload, color: Colors.black), label: const Text('UPLOAD', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold))),
               );
             }
           }
@@ -373,9 +306,7 @@ jobs:
                 ]),
               ]))));
             }
-            Widget _card(BuildContext context, IconData icon, String title, Color color, VoidCallback onTap) {
-              return InkWell(onTap: onTap, borderRadius: BorderRadius.circular(12), child: Container(width: 140, height: 150, decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(12), border: Border.all(color: color.withOpacity(0.5), width: 2)), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon, size: 44, color: color), const SizedBox(height: 10), Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 2))])));
-            }
+            Widget _card(BuildContext context, IconData icon, String title, Color color, VoidCallback onTap) { return InkWell(onTap: onTap, borderRadius: BorderRadius.circular(12), child: Container(width: 140, height: 150, decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(12), border: Border.all(color: color.withOpacity(0.5), width: 2)), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon, size: 44, color: color), const SizedBox(height: 10), Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 2))]))); }
           }
           D
 
@@ -388,10 +319,7 @@ jobs:
           class _CameraScreenState extends State<CameraScreen> {
             bool _live = false; bool _recording = false; bool _micMuted = false; bool _front = false; String _quality = '720p'; int _fps = 30; String _status = 'READY'; List<String> _usbMics = []; CameraController? _cam; double _zoom = 1.0; double _maxZoom = 1.0;
             @override void initState() { super.initState(); _init(); }
-            Future<void> _init() async {
-              _cam = await StreamingService.initialize(front: _front); if (_cam != null) { try { _maxZoom = await _cam!.getMaxZoomLevel(); _zoom = await _cam!.getMinZoomLevel(); } catch (e) { _maxZoom = 1.0; } }
-              final mics = await StreamingService.detectUsbMics(); if (mounted) setState(() => _usbMics = mics);
-            }
+            Future<void> _init() async { _cam = await StreamingService.initialize(front: _front); if (_cam != null) { try { _maxZoom = await _cam!.getMaxZoomLevel(); _zoom = await _cam!.getMinZoomLevel(); } catch (e) { _maxZoom = 1.0; } } final mics = await StreamingService.detectUsbMics(); if (mounted) setState(() => _usbMics = mics); }
             void _cycleQ() { setState(() { if (_quality == '720p') _quality = '480p'; else if (_quality == '480p') _quality = '360p'; else _quality = '720p'; }); }
             void _cycleF() { setState(() { final o = [24, 25, 30, 35, 60]; _fps = o[(o.indexOf(_fps) + 1) % o.length]; }); }
             Future<void> _toggleLive() async {
@@ -402,11 +330,7 @@ jobs:
               final camPath = 'cam$camResult'; setState(() => _status = 'CONNECTING...');
               try { await StreamingService.startStreamToServer(camPath, "13.140.90.83"); if (mounted) setState(() { _live = true; _status = 'LIVE ON CAM $camResult'; }); } catch (e) { if (mounted) setState(() => _status = 'ERROR'); }
             }
-            Future<void> _toggleRecord() async {
-              if (_recording) { await StreamingService.stopRecording(); if (mounted) setState(() { _recording = false; _status = 'RECORDING SAVED'; }); return; }
-              final path = '/storage/emulated/0/Movies/abrimax_${DateTime.now().millisecondsSinceEpoch}.mp4';
-              await StreamingService.startRecording(path); if (mounted) setState(() { _recording = true; _status = 'RECORDING'; });
-            }
+            Future<void> _toggleRecord() async { if (_recording) { await StreamingService.stopRecording(); if (mounted) setState(() { _recording = false; _status = 'RECORDING SAVED'; }); return; } final path = '/storage/emulated/0/Movies/abrimax_${DateTime.now().millisecondsSinceEpoch}.mp4'; await StreamingService.startRecording(path); if (mounted) setState(() { _recording = true; _status = 'RECORDING'; }); }
             @override void dispose() { StreamingService.dispose(); super.dispose(); }
             @override Widget build(BuildContext context) {
               final isReady = _cam != null && (_cam!.value.isInitialized ?? false);
@@ -426,9 +350,7 @@ jobs:
                   ]))),
                 ]));
             }
-            Widget _btn(IconData icon, String label, Color color, double size, VoidCallback onTap) {
-              return InkWell(onTap: onTap, borderRadius: BorderRadius.circular(8), child: Container(width: size, height: size, decoration: BoxDecoration(color: color.withOpacity(0.12), border: Border.all(color: color, width: 1.5), borderRadius: BorderRadius.circular(8)), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon, color: color, size: size * 0.32), const SizedBox(height: 4), Text(label, textAlign: TextAlign.center, style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1))])));
-            }
+            Widget _btn(IconData icon, String label, Color color, double size, VoidCallback onTap) { return InkWell(onTap: onTap, borderRadius: BorderRadius.circular(8), child: Container(width: size, height: size, decoration: BoxDecoration(color: color.withOpacity(0.12), border: Border.all(color: color, width: 1.5), borderRadius: BorderRadius.circular(8)), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon, color: color, size: size * 0.32), const SizedBox(height: 4), Text(label, textAlign: TextAlign.center, style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1))]))); }
           }
           D
 
@@ -445,24 +367,8 @@ jobs:
             @override void initState() { super.initState(); _load(); }
             Future<void> _load() async { final items = await _store.loadAll(); if (mounted) setState(() => _items = items); }
             Future<void> _save() async { await _store.saveAll(_items); if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved Locally'))); }
-            
-            Future<void> _pushLive() async {
-              try {
-                await http.post(Uri.parse('http://${widget.serverIp}:3000/update-live-graphics'), 
-                  headers: {'Content-Type': 'application/json'}, 
-                  body: jsonEncode({'overlays': _items.map((e) => e.toJson()).toList()})
-                );
-                if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Graphics Pushed Live!')));
-              } catch (e) {
-                if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
-              }
-            }
-
-            Future<void> _addText() async {
-              final ctrl = TextEditingController();
-              final text = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(backgroundColor: const Color(0xFF141418), title: const Text('Add Text'), content: TextField(controller: ctrl, autofocus: true, style: const TextStyle(color: Colors.white)), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('ADD'))]));
-              if (text == null || text.isEmpty) return; setState(() => _items.add(OverlayItem(id: const Uuid().v4(), kind: OverlayKind.text, content: text, x: 0.5, y: 0.5)));
-            }
+            Future<void> _pushLive() async { try { await http.post(Uri.parse('http://${widget.serverIp}:3000/update-live-graphics'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'overlays': _items.map((e) => e.toJson()).toList()})); if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Graphics Pushed Live!'))); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); } }
+            Future<void> _addText() async { final ctrl = TextEditingController(); final text = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(backgroundColor: const Color(0xFF141418), title: const Text('Add Text'), content: TextField(controller: ctrl, autofocus: true, style: const TextStyle(color: Colors.white)), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('ADD'))])); if (text == null || text.isEmpty) return; setState(() => _items.add(OverlayItem(id: const Uuid().v4(), kind: OverlayKind.text, content: text, x: 0.5, y: 0.5))); }
             void _addLive() { setState(() => _items.add(OverlayItem(id: const Uuid().v4(), kind: OverlayKind.liveBadge, content: 'LIVE', x: 0.1, y: 0.15, size: 14, color: 0xFFEF4444))); }
             void _addLowerThird() { setState(() => _items.add(OverlayItem(id: const Uuid().v4(), kind: OverlayKind.lowerThird, content: 'BREAKING NEWS', x: 0.15, y: 0.85, size: 18, color: 0xFF000000))); }
             void _move(Offset d, Size box) { if (_sel == null) return; final item = _items.firstWhere((e) => e.id == _sel); setState(() { item.x = (item.x + d.dx / box.width).clamp(0.0, 1.0); item.y = (item.y + d.dy / box.height).clamp(0.0, 1.0); }); }
@@ -485,157 +391,32 @@ jobs:
 
           class AccountsScreen extends StatefulWidget {
             const AccountsScreen({super.key});
-            @override
-            State<AccountsScreen> createState() => _AccountsScreenState();
+            @override State<AccountsScreen> createState() => _AccountsScreenState();
           }
-
           class _AccountsScreenState extends State<AccountsScreen> {
-            final _store = AccountStore();
-            List<AccountItem> _items = [];
-            bool _loading = true;
-            final _platforms = <String, Map<String, String>>{
-              'YouTube': {'rtmp': 'rtmp://a.rtmp.youtube.com/live2', 'color': 'FF0000'},
-              'Twitch': {'rtmp': 'rtmp://live.twitch.tv/app', 'color': '9146FF'},
-              'Facebook': {'rtmp': 'rtmps://live-api-s.facebook.com:443/rtmp', 'color': '1877F2'},
-              'TikTok': {'rtmp': 'rtmp://push.tiktokv.com/live', 'color': '00F2EA'},
-              'Kick': {'rtmp': 'rtmp://fa723fc1b171.global-contribute.live-video.net/app', 'color': '53FC18'},
-              'Trovo': {'rtmp': 'rtmp://livepush.trovo.live/live', 'color': '27DB8A'},
-              'LinkedIn': {'rtmp': 'rtmp://rtmp-api.facebook.com:80/rtmp', 'color': '0A66C2'},
-              'X': {'rtmp': 'rtmp://ingest.pscp.tv:80/x', 'color': '1DA1F2'}
-            };
-
-            @override
-            void initState() {
-              super.initState();
-              _load();
-            }
-
-            Future<void> _load() async {
-              final items = await _store.loadAll();
-              if (mounted) setState(() { _items = items; _loading = false; });
-            }
-
-            IconData _icon(String name) {
-              switch (name) {
-                case 'YouTube': return Icons.play_circle_fill;
-                case 'Twitch': return Icons.videogame_asset;
-                case 'Facebook': return Icons.facebook;
-                case 'TikTok': return Icons.music_note;
-                case 'Kick': return Icons.sports_esports;
-                case 'Trovo': return Icons.live_tv;
-                case 'LinkedIn': return Icons.business;
-                case 'X': return Icons.alternate_email;
-              }
-              return Icons.live_tv;
-            }
-
-            Color _color(String name) {
-              final hex = _platforms[name]?['color'] ?? '3B82F6';
-              return Color(int.parse('FF$hex', radix: 16));
-            }
-
+            final _store = AccountStore(); List<AccountItem> _items = []; bool _loading = true;
+            final _platforms = <String, Map<String, String>>{'YouTube': {'rtmp': 'rtmp://a.rtmp.youtube.com/live2', 'color': 'FF0000'}, 'Twitch': {'rtmp': 'rtmp://live.twitch.tv/app', 'color': '9146FF'}, 'Facebook': {'rtmp': 'rtmps://live-api-s.facebook.com:443/rtmp', 'color': '1877F2'}, 'TikTok': {'rtmp': 'rtmp://push.tiktokv.com/live', 'color': '00F2EA'}, 'Kick': {'rtmp': 'rtmp://fa723fc1b171.global-contribute.live-video.net/app', 'color': '53FC18'}, 'Trovo': {'rtmp': 'rtmp://livepush.trovo.live/live', 'color': '27DB8A'}, 'LinkedIn': {'rtmp': 'rtmp://rtmp-api.facebook.com:80/rtmp', 'color': '0A66C2'}, 'X': {'rtmp': 'rtmp://ingest.pscp.tv:80/x', 'color': '1DA1F2'}};
+            @override void initState() { super.initState(); _load(); }
+            Future<void> _load() async { final items = await _store.loadAll(); if (mounted) setState(() { _items = items; _loading = false; }); }
+            IconData _icon(String name) { switch (name) { case 'YouTube': return Icons.play_circle_fill; case 'Twitch': return Icons.videogame_asset; case 'Facebook': return Icons.facebook; case 'TikTok': return Icons.music_note; case 'Kick': return Icons.sports_esports; case 'Trovo': return Icons.live_tv; case 'LinkedIn': return Icons.business; case 'X': return Icons.alternate_email; } return Icons.live_tv; }
+            Color _color(String name) { final hex = _platforms[name]?['color'] ?? '3B82F6'; return Color(int.parse('FF$hex', radix: 16)); }
             Future<void> _link(String platform) async {
-              final keyCtrl = TextEditingController();
-              final nameCtrl = TextEditingController(text: platform);
-              final ok = await showDialog<bool>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  backgroundColor: const Color(0xFF141418),
-                  title: Text('Paste $platform stream key'),
-                  content: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        TextField(controller: nameCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Display name')),
-                        const SizedBox(height: 8),
-                        TextField(controller: keyCtrl, autofocus: true, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Stream Key'))
-                      ]
-                    )
-                  ),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')),
-                    FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('LINK'))
-                  ]
-                )
-              );
+              final keyCtrl = TextEditingController(); final nameCtrl = TextEditingController(text: platform);
+              final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(backgroundColor: const Color(0xFF141418), title: Text('Paste $platform stream key'), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [TextField(controller: nameCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Display name')), const SizedBox(height: 8), TextField(controller: keyCtrl, autofocus: true, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Stream Key'))])), actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('LINK'))]));
               if (ok != true || keyCtrl.text.trim().isEmpty) return;
-              final u = [..._items];
-              u.removeWhere((a) => a.platform == platform);
-              u.add(AccountItem(id: const Uuid().v4(), platform: platform, name: nameCtrl.text.trim(), streamKey: keyCtrl.text.trim(), rtmpUrl: _platforms[platform]?['rtmp'] ?? ''));
-              await _store.saveAll(u);
-              if (mounted) setState(() => _items = u);
+              final u = [..._items]; u.removeWhere((a) => a.platform == platform); u.add(AccountItem(id: const Uuid().v4(), platform: platform, name: nameCtrl.text.trim(), streamKey: keyCtrl.text.trim(), rtmpUrl: _platforms[platform]?['rtmp'] ?? ''));
+              await _store.saveAll(u); if (mounted) setState(() => _items = u);
             }
-
-            Future<void> _unlink(String id) async {
-              final u = _items.where((a) => a.id != id).toList();
-              await _store.saveAll(u);
-              if (mounted) setState(() => _items = u);
-            }
-
-            @override
-            Widget build(BuildContext context) {
-              if (_loading) {
-                return const Scaffold(backgroundColor: Color(0xFF0A0A0F), body: Center(child: CircularProgressIndicator()));
-              }
-              return Scaffold(
-                backgroundColor: const Color(0xFF0A0A0F),
-                appBar: AppBar(title: const Text('LINK ACCOUNTS', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)), backgroundColor: const Color(0xFF141418)),
-                body: GridView.count(
-                  padding: const EdgeInsets.all(16),
-                  crossAxisCount: 2,
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  childAspectRatio: 1.5,
-                  children: _platforms.keys.map((name) {
-                    final linked = _items.where((a) => a.platform == name).toList();
-                    final isLinked = linked.isNotEmpty;
-                    final color = _color(name);
-                    return InkWell(
-                      onTap: () => _link(name),
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: color.withOpacity(0.10),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: isLinked ? color : Colors.white24, width: 2)
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Row(
-                                children: [
-                                  Icon(_icon(name), color: color, size: 28),
-                                  const Spacer(),
-                                  if (isLinked)
-                                    GestureDetector(
-                                      onTap: () => _unlink(linked.first.id),
-                                      child: const Icon(Icons.close, color: Colors.white54, size: 18)
-                                    )
-                                ]
-                              ),
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(name, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 1)),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    isLinked ? linked.first.name : 'Tap to paste key',
-                                    style: TextStyle(color: isLinked ? color : Colors.white54, fontSize: 11),
-                                    overflow: TextOverflow.ellipsis
-                                  )
-                                ]
-                              )
-                            ]
-                          )
-                        )
-                      )
-                    );
-                  }).toList()
-                )
-              );
+            Future<void> _unlink(String id) async { final u = _items.where((a) => a.id != id).toList(); await _store.saveAll(u); if (mounted) setState(() => _items = u); }
+            @override Widget build(BuildContext context) {
+              if (_loading) { return const Scaffold(backgroundColor: Color(0xFF0A0A0F), body: Center(child: CircularProgressIndicator())); }
+              return Scaffold(backgroundColor: const Color(0xFF0A0A0F), appBar: AppBar(title: const Text('LINK ACCOUNTS', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)), backgroundColor: const Color(0xFF141418)), body: GridView.count(padding: const EdgeInsets.all(16), crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 1.5, children: _platforms.keys.map((name) {
+                final linked = _items.where((a) => a.platform == name).toList(); final isLinked = linked.isNotEmpty; final color = _color(name);
+                return InkWell(onTap: () => _link(name), borderRadius: BorderRadius.circular(12), child: Container(decoration: BoxDecoration(color: color.withOpacity(0.10), borderRadius: BorderRadius.circular(12), border: Border.all(color: isLinked ? color : Colors.white24, width: 2)), child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  Row(children: [Icon(_icon(name), color: color, size: 28), const Spacer(), if (isLinked) GestureDetector(onTap: () => _unlink(linked.first.id), child: const Icon(Icons.close, color: Colors.white54, size: 18))]),
+                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(name, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 1)), const SizedBox(height: 2), Text(isLinked ? linked.first.name : 'Tap to paste key', style: TextStyle(color: isLinked ? color : Colors.white54, fontSize: 11), overflow: TextOverflow.ellipsis)])
+                ]))));
+              }).toList()));
             }
           }
           D
@@ -703,7 +484,7 @@ jobs:
           }
           D
 
-          # ─── lib/screens/director_screen.dart (MODIFIED FOR LIBRARY) ───
+          # ─── lib/screens/director_screen.dart ───
           cat > lib/screens/director_screen.dart << 'D'
           import 'dart:async';
           import 'dart:convert';
@@ -742,14 +523,9 @@ jobs:
             String get _time { final h = (_sec ~/ 3600).toString().padLeft(2, '0'); final m = ((_sec ~/ 60) % 60).toString().padLeft(2, '0'); final s = (_sec % 60).toString().padLeft(2, '0'); return '$h:$m:$s'; }
             
             Future<void> _take() async {
-              final l = _live.indexOf(true);
-              final p = _prev.indexOf(true);
-              if (l < 0 || p < 0) return;
+              final l = _live.indexOf(true); final p = _prev.indexOf(true); if (l < 0 || p < 0) return;
               setState(() { _live[l] = false; _prev[l] = true; _prev[p] = false; _live[p] = true; });
-              try {
-                final response = await http.post(Uri.parse('http://$_serverIp:3000/switch-to-cam'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'camPath': 'cam${p + 1}'}));
-                if (response.statusCode == 200 && mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('TAKE Successful! cam${p+1} is live.')));
-              } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Server Error: $e'))); }
+              try { final response = await http.post(Uri.parse('http://$_serverIp:3000/switch-to-cam'), headers: {'Content-Type': 'application/json', 'x-user-id': 'edger_user'}, body: jsonEncode({'camPath': 'cam${p + 1}', 'platforms': ['rtmp://a.rtmp.youtube.com/live2/$_savedYtKey']})); if (response.statusCode == 200 && mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('TAKE Successful! cam${p+1} is live.'))); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Server Error: $e'))); }
             }
 
             void _selPrev(int i) { setState(() { for (var k = 0; k < _camCount; k++) _prev[k] = false; _prev[i] = true; }); }
@@ -792,15 +568,9 @@ jobs:
                    final camCtrl = TextEditingController(text: "1");
                    final camNum = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(backgroundColor: _panel, title: const Text('Switch to Live Camera', style: TextStyle(color: Colors.white)), content: TextField(controller: camCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Camera Number (1-15)', labelStyle: TextStyle(color: Colors.white54))), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(ctx, camCtrl.text), child: const Text('GO LIVE'))]));
                    if (camNum == null || camNum.isEmpty) return;
-                   try {
-                     final response = await http.post(Uri.parse('http://$_serverIp:3000/switch-to-cam'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'camPath': 'cam$camNum'}));
-                     if (response.statusCode == 200 && mounted) setState(() => _isLiveMode = true);
-                   } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); }
+                   try { final response = await http.post(Uri.parse('http://$_serverIp:3000/switch-to-cam'), headers: {'Content-Type': 'application/json', 'x-user-id': 'edger_user'}, body: jsonEncode({'camPath': 'cam$camNum', 'platforms': ['rtmp://a.rtmp.youtube.com/live2/$_savedYtKey']})); if (response.statusCode == 200 && mounted) setState(() => _isLiveMode = true); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); }
                } else {
-                   try {
-                     final response = await http.post(Uri.parse('http://$_serverIp:3000/switch-to-auto'));
-                     if (response.statusCode == 200 && mounted) setState(() => _isLiveMode = false);
-                   } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); }
+                   try { final response = await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule'), headers: {'x-user-id': 'edger_user'}); if (response.statusCode == 200 && mounted) setState(() => _isLiveMode = false); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); }
                }
             }
             Future<void> _startAutomatedBroadcast() async {
@@ -808,42 +578,22 @@ jobs:
               final store = AccountStore(); final linkedAccounts = await store.loadAll();
               if (linkedAccounts.isEmpty) { linkedAccounts.add(AccountItem(id: 'default', platform: 'YouTube', name: 'Default YouTube', streamKey: _savedYtKey, rtmpUrl: '')); }
               Map<String, bool> activePlatforms = {}; for (var acc in linkedAccounts) { activePlatforms[acc.id] = true; }
-              
-              // Fetch library for this user
-              List<dynamic> library = [];
-              try { final res = await http.get(Uri.parse('http://$_serverIp:3000/library/edger_user')); if (res.statusCode == 200) library = jsonDecode(res.body); } catch (e) { debugPrint('Error fetching library: $e'); }
-              
+              List<dynamic> library = []; try { final res = await http.get(Uri.parse('http://$_serverIp:3000/library/edger_user')); if (res.statusCode == 200) library = jsonDecode(res.body); } catch (e) { debugPrint('Error fetching library: $e'); }
               String? selectedVideoId; String? selectedVideoName;
-              
               final result = await showDialog<String>(context: context, builder: (ctx) => StatefulBuilder(builder: (context, setDialogState) {
                 return AlertDialog(backgroundColor: _panel, title: const Text('Select Video from Library', style: TextStyle(color: Colors.white, fontSize: 16)), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
                   const Text('Choose Video:', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                  DropdownButton<String>(
-                    isExpanded: true,
-                    dropdownColor: _panel,
-                    hint: const Text('Select a video', style: TextStyle(color: Colors.white54)),
-                    value: selectedVideoId,
-                    items: library.map((v) => DropdownMenuItem<String>(value: v['telegram_message_id'].toString(), child: Text(v['name'], style: const TextStyle(color: Colors.white, fontSize: 12)))).toList(),
-                    onChanged: (val) { setDialogState(() { selectedVideoId = val; selectedVideoName = library.firstWhere((v) => v['telegram_message_id'].toString() == val)['name']; }); }
-                  ),
+                  DropdownButton<String>(isExpanded: true, dropdownColor: _panel, hint: const Text('Select a video', style: TextStyle(color: Colors.white54)), value: selectedVideoId, items: library.map((v) => DropdownMenuItem<String>(value: v['telegram_message_id'].toString(), child: Text(v['name'], style: const TextStyle(color: Colors.white, fontSize: 12)))).toList(), onChanged: (val) { setDialogState(() { selectedVideoId = val; selectedVideoName = library.firstWhere((v) => v['telegram_message_id'].toString() == val)['name']; }); }),
                   const SizedBox(height: 12),
                   const Text('Broadcast To:', style: TextStyle(color: Colors.tealAccent, fontSize: 12, fontWeight: FontWeight.bold)), const SizedBox(height: 8),
                   ...linkedAccounts.map((acc) { return CheckboxListTile(title: Text('${acc.platform} (${acc.name})', style: const TextStyle(color: Colors.white, fontSize: 12)), value: activePlatforms[acc.id], activeColor: Colors.tealAccent, contentPadding: EdgeInsets.zero, onChanged: (val) { setDialogState(() => activePlatforms[acc.id] = val ?? false); }); }).toList(),
-                ])), actions: [
-                  TextButton(onPressed: () async { await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule')); if (ctx.mounted) Navigator.pop(ctx); }, child: const Text('STOP LIVE', style: TextStyle(color: Colors.red))),
-                  FilledButton(onPressed: () { if (selectedVideoId == null) return; Navigator.pop(ctx, 'ADD'); }, child: const Text('PLAY NOW'))
-                ]);
+                ])), actions: [TextButton(onPressed: () async { await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule'), headers: {'x-user-id': 'edger_user'}); if (ctx.mounted) Navigator.pop(ctx); }, child: const Text('STOP LIVE', style: TextStyle(color: Colors.red))), FilledButton(onPressed: () { if (selectedVideoId == null) return; Navigator.pop(ctx, 'ADD'); }, child: const Text('PLAY NOW'))]);
               }));
-              
               if (result == 'ADD' && selectedVideoId != null) {
                 final List<String> selectedKeys = []; for (var acc in linkedAccounts) { if (activePlatforms[acc.id] == true) { if (acc.platform == 'YouTube' && acc.rtmpUrl.isEmpty) { selectedKeys.add(acc.streamKey); } else { selectedKeys.add('${acc.rtmpUrl}/${acc.streamKey}'); } } }
                 if (selectedKeys.isEmpty) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select at least one platform.'))); return; }
-                
                 try {
-                  final response = await http.post(Uri.parse('http://$_serverIp:3000/play-now'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({
-                    'video': {'telegram_message_id': selectedVideoId, 'name': selectedVideoName},
-                    'platforms': selectedKeys
-                  }));
+                  final response = await http.post(Uri.parse('http://$_serverIp:3000/play-now'), headers: {'Content-Type': 'application/json', 'x-user-id': 'edger_user'}, body: jsonEncode({'video': {'telegram_message_id': selectedVideoId, 'name': selectedVideoName}, 'platforms': selectedKeys}));
                   if (mounted) { setState(() => _onAir = true); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Playing from Library!'))); }
                 } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to connect: $e'))); }
               }
@@ -851,51 +601,27 @@ jobs:
             Future<void> _scheduleTimedVideo() async {
               if (_savedYtKey.isEmpty) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please set your Stream Settings first!'))); _openStreamSettings(); return; }
               TimeOfDay? pickedTime;
-              
-              List<dynamic> library = [];
-              try { final res = await http.get(Uri.parse('http://$_serverIp:3000/library/edger_user')); if (res.statusCode == 200) library = jsonDecode(res.body); } catch (e) { debugPrint('Error fetching library: $e'); }
-              
+              List<dynamic> library = []; try { final res = await http.get(Uri.parse('http://$_serverIp:3000/library/edger_user')); if (res.statusCode == 200) library = jsonDecode(res.body); } catch (e) { debugPrint('Error fetching library: $e'); }
               String? selectedVideoId; String? selectedVideoName;
-
               final result = await showDialog<String>(context: context, builder: (ctx) => StatefulBuilder(builder: (context, setDialogState) {
                 return AlertDialog(backgroundColor: _panel, title: const Text('Schedule Video at Exact Time', style: TextStyle(color: Colors.white, fontSize: 16)), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
                   const Text('Choose Video from Library:', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                  DropdownButton<String>(
-                    isExpanded: true,
-                    dropdownColor: _panel,
-                    hint: const Text('Select a video', style: TextStyle(color: Colors.white54)),
-                    value: selectedVideoId,
-                    items: library.map((v) => DropdownMenuItem<String>(value: v['telegram_message_id'].toString(), child: Text(v['name'], style: const TextStyle(color: Colors.white, fontSize: 12)))).toList(),
-                    onChanged: (val) { setDialogState(() { selectedVideoId = val; selectedVideoName = library.firstWhere((v) => v['telegram_message_id'].toString() == val)['name']; }); }
-                  ),
+                  DropdownButton<String>(isExpanded: true, dropdownColor: _panel, hint: const Text('Select a video', style: TextStyle(color: Colors.white54)), value: selectedVideoId, items: library.map((v) => DropdownMenuItem<String>(value: v['telegram_message_id'].toString(), child: Text(v['name'], style: const TextStyle(color: Colors.white, fontSize: 12)))).toList(), onChanged: (val) { setDialogState(() { selectedVideoId = val; selectedVideoName = library.firstWhere((v) => v['telegram_message_id'].toString() == val)['name']; }); }),
                   const SizedBox(height: 16),
                   ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent), onPressed: () async { final time = await showTimePicker(context: context, initialTime: TimeOfDay.now()); if (time != null) { setDialogState(() => pickedTime = time); } }, icon: const Icon(Icons.access_time), label: Text(pickedTime == null ? 'Select Time' : 'Time: ${pickedTime!.format(context)}')),
                 ])), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('CANCEL')), FilledButton(onPressed: () { if (pickedTime == null || selectedVideoId == null) return; Navigator.pop(ctx, 'SCHEDULE'); }, child: const Text('SCHEDULE'))]);
               }));
-              
               if (result == 'SCHEDULE' && pickedTime != null && selectedVideoId != null) {
                 final hour = pickedTime!.hour.toString().padLeft(2, '0'); final minute = pickedTime!.minute.toString().padLeft(2, '0'); final timeString = "$hour:$minute";
                 try {
-                  final response = await http.post(Uri.parse('http://$_serverIp:3000/schedule-time'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({
-                    'time': timeString, 
-                    'videoId': selectedVideoId,
-                    'videoName': selectedVideoName,
-                    'platforms': ['rtmp://a.rtmp.youtube.com/live2/$_savedYtKey'], // Modify as needed for linked accounts
-                  }));
+                  final response = await http.post(Uri.parse('http://$_serverIp:3000/schedule-time'), headers: {'Content-Type': 'application/json', 'x-user-id': 'edger_user'}, body: jsonEncode({'time': timeString, 'videoId': selectedVideoId, 'videoName': selectedVideoName, 'platforms': ['rtmp://a.rtmp.youtube.com/live2/$_savedYtKey']}));
                   if (response.statusCode == 200 && mounted) { final msg = jsonDecode(response.body)['message'] ?? 'Video scheduled'; ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg))); }
                 } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to connect: $e'))); }
               }
             }
             @override Widget build(BuildContext context) {
               return Scaffold(backgroundColor: _bg, body: SafeArea(child: Stack(children: [
-                Column(children: [
-                  _top(),
-                  if (_showLiveCamera) Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(8), child: Container(margin: const EdgeInsets.all(4), decoration: BoxDecoration(border: Border.all(color: _yellow, width: 1.5)), child: const LiveCamera(front: false)))),
-                  if (!_showLiveCamera) _strip(),
-                  _tabs(),
-                  Expanded(child: _tab == 1 ? _grid() : _prog()),
-                  _bar(),
-                ]),
+                Column(children: [ _top(), if (_showLiveCamera) Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(8), child: Container(margin: const EdgeInsets.all(4), decoration: BoxDecoration(border: Border.all(color: _yellow, width: 1.5)), child: const LiveCamera(front: false)))), if (!_showLiveCamera) _strip(), _tabs(), Expanded(child: _tab == 1 ? _grid() : _prog()), _bar() ]),
                 if (_menuOpen) _menu(),
               ])));
             }
@@ -905,53 +631,19 @@ jobs:
             Widget _addTile() { return Padding(padding: const EdgeInsets.symmetric(horizontal: 2), child: GestureDetector(onTap: _add, child: Container(decoration: BoxDecoration(borderRadius: BorderRadius.circular(3), border: Border.all(color: Colors.tealAccent, width: 1)), child: const Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.add, color: Colors.tealAccent, size: 18), SizedBox(height: 2), Text('Add', style: TextStyle(color: Colors.tealAccent, fontSize: 7))])))); }
             Widget _tabs() { return Container(height: 24, color: _bg, padding: const EdgeInsets.symmetric(horizontal: 10), child: Row(children: [_tabBtn('PROGRAM', 0), const SizedBox(width: 20), _tabBtn('MULTIVIEW', 1)])); }
             Widget _tabBtn(String label, int idx) { final a = _tab == idx; return GestureDetector(onTap: () => setState(() => _tab = idx), child: Text(label, style: TextStyle(color: a ? Colors.white : Colors.white54, fontSize: 9, fontWeight: a ? FontWeight.w900 : FontWeight.w600, letterSpacing: 2))); }
-            Widget _prog() {
-              if (_savedYtVideoId.isNotEmpty) { return WebViewWidget(controller: WebViewController()..setJavaScriptMode(JavaScriptMode.unrestricted)..loadRequest(Uri.parse('https://www.youtube.com/embed/$_savedYtVideoId?autoplay=1&mute=1'))); }
-              final pi = _prev.indexOf(true); final pn = pi >= 0 ? pi + 1 : 1;
-              return Padding(padding: const EdgeInsets.fromLTRB(10, 2, 10, 2), child: Container(decoration: BoxDecoration(color: Colors.black, border: Border.all(color: _yellow, width: 1.5), borderRadius: BorderRadius.circular(4)), child: Stack(children: [_CameraStream(cameraNumber: pn, serverIp: _serverIp), Positioned(top: 6, left: 6, child: Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(2)), child: const Text('PROGRAM', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1.5)))), if (_overlays.isNotEmpty) Positioned.fill(child: OverlayRenderer(overlays: _overlays)), Positioned(right: 8, bottom: 8, width: 200, height: 112, child: Container(decoration: BoxDecoration(color: Colors.black, border: Border.all(color: _yellow, width: 1.5), borderRadius: BorderRadius.circular(3)), child: Stack(children: [_CameraStream(cameraNumber: pn, serverIp: _serverIp), Positioned(top: 3, left: 3, child: Container(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1), decoration: BoxDecoration(color: _yellow, borderRadius: BorderRadius.circular(2)), child: const Text('PREVIEW', style: TextStyle(color: Colors.black, fontSize: 6, fontWeight: FontWeight.w900, letterSpacing: 1))))])))])));
-            }
+            Widget _prog() { if (_savedYtVideoId.isNotEmpty) { return WebViewWidget(controller: WebViewController()..setJavaScriptMode(JavaScriptMode.unrestricted)..loadRequest(Uri.parse('https://www.youtube.com/embed/$_savedYtVideoId?autoplay=1&mute=1'))); } final pi = _prev.indexOf(true); final pn = pi >= 0 ? pi + 1 : 1; return Padding(padding: const EdgeInsets.fromLTRB(10, 2, 10, 2), child: Container(decoration: BoxDecoration(color: Colors.black, border: Border.all(color: _yellow, width: 1.5), borderRadius: BorderRadius.circular(4)), child: Stack(children: [_CameraStream(cameraNumber: pn, serverIp: _serverIp), Positioned(top: 6, left: 6, child: Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(2)), child: const Text('PROGRAM', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1.5)))), if (_overlays.isNotEmpty) Positioned.fill(child: OverlayRenderer(overlays: _overlays)), Positioned(right: 8, bottom: 8, width: 200, height: 112, child: Container(decoration: BoxDecoration(color: Colors.black, border: Border.all(color: _yellow, width: 1.5), borderRadius: BorderRadius.circular(3)), child: Stack(children: [_CameraStream(cameraNumber: pn, serverIp: _serverIp), Positioned(top: 3, left: 3, child: Container(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1), decoration: BoxDecoration(color: _yellow, borderRadius: BorderRadius.circular(2)), child: const Text('PREVIEW', style: TextStyle(color: Colors.black, fontSize: 6, fontWeight: FontWeight.w900, letterSpacing: 1))))])))]))); }
             Widget _grid() { int c; if (_camCount <= 4) c = 2; else if (_camCount <= 9) c = 3; else if (_camCount <= 12) c = 4; else c = 5; return Padding(padding: const EdgeInsets.all(10), child: GridView.builder(itemCount: _camCount, gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: c, mainAxisSpacing: 6, crossAxisSpacing: 6, childAspectRatio: 16 / 9), itemBuilder: (_, i) { final l = _live[i]; final p = _prev[i]; final bc = l ? _red : (p ? _yellow : _grey); return GestureDetector(onTap: () => _selPrev(i), onLongPress: () => _rm(i), child: Container(decoration: BoxDecoration(color: Colors.black, border: Border.all(color: bc, width: 1.5), borderRadius: BorderRadius.circular(3)), child: Stack(children: [_CameraStream(cameraNumber: i + 1, serverIp: _serverIp), Positioned(bottom: 4, left: 4, child: Text('CAM ${i + 1}', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 2)))]))); })); }
-            Widget _bar() {
-              return Container(height: 48, color: _bg, padding: const EdgeInsets.symmetric(horizontal: 10), child: Row(children: [
-                GestureDetector(
-                  onTap: () async {
-                    if (_onAir) {
-                      try { await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule')); setState(() => _onAir = false); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); }
-                    } else {
-                      setState(() => _menuOpen = true);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Use "Add to TV Schedule" to go live!')));
-                    }
-                  }, 
-                  child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 14), decoration: BoxDecoration(color: _onAir ? _red : const Color(0xFF1E293B), borderRadius: BorderRadius.circular(5)), child: Row(children: [Icon(_onAir ? Icons.stop_circle : Icons.podcasts, color: Colors.white, size: 16), const SizedBox(width: 6), Text(_onAir ? 'END STREAM' : 'GO LIVE', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.2))]))
-                ),
-                const SizedBox(width: 8),
-                GestureDetector(onTap: () => setState(() => _showLiveCamera = !_showLiveCamera), child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 10), decoration: BoxDecoration(color: _showLiveCamera ? _blue.withOpacity(0.3) : Colors.white10, borderRadius: BorderRadius.circular(5), border: Border.all(color: _showLiveCamera ? _blue : Colors.white24)), child: Row(children: [Icon(_showLiveCamera ? Icons.videocam : Icons.videocam_off, color: _showLiveCamera ? _blue : Colors.white54, size: 14), const SizedBox(width: 4), Text('LIVE CAM', style: TextStyle(color: _showLiveCamera ? _blue : Colors.white54, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1))]))),
-                const SizedBox(width: 8),
-                GestureDetector(onTap: _toggleLiveSwitch, child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 10), decoration: BoxDecoration(color: _isLiveMode ? Colors.orangeAccent.withOpacity(0.3) : Colors.white10, borderRadius: BorderRadius.circular(5), border: Border.all(color: _isLiveMode ? Colors.orangeAccent : Colors.white24)), child: Row(children: [Icon(_isLiveMode ? Icons.switch_video : Icons.swap_horiz, color: _isLiveMode ? Colors.orangeAccent : Colors.white54, size: 14), const SizedBox(width: 4), Text(_isLiveMode ? 'LIVE MODE ON' : 'SWITCH TO CAM', style: TextStyle(color: _isLiveMode ? Colors.orangeAccent : Colors.white54, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1))]))),
-                const Spacer(),
-                GestureDetector(onTap: _take, child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 20), decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(5)), child: const Row(children: [Icon(Icons.fiber_manual_record, color: Colors.white, size: 10), SizedBox(width: 6), Text('TAKE', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 2.5))]))),
-              ]));
-            }
-            Widget _menu() { return Positioned(top: 0, right: 0, bottom: 0, child: Container(width: 220, color: _bg, child: Column(children: [
-                Container(height: 40, padding: const EdgeInsets.symmetric(horizontal: 12), decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: _grey))), child: Row(children: [const Text('Menu', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800)), const Spacer(), GestureDetector(onTap: () => setState(() => _menuOpen = false), child: const Icon(Icons.close, color: Colors.white, size: 16))])),
-                _mi(Icons.dns, 'Server IP ($_serverIp)', _editServer), _mi(Icons.grid_view, 'Camera Count', () { setState(() => _menuOpen = false); _pick(); }), _mi(Icons.add, 'Add Camera', () { setState(() => _menuOpen = false); _add(); }), _mi(Icons.layers, 'Graphics', _openG, teal: true), _mi(Icons.link, 'Link Accounts', _openA), _mi(Icons.video_library, 'My Library (Upload Videos)', _openLibrary, teal: true), _mi(Icons.movie, 'Studio Canvas (Video + Cam)', _openStudioCanvas, teal: true), _mi(Icons.settings, 'Stream Settings (Key/Logos)', () { setState(() => _menuOpen = false); _openStreamSettings(); }), _mi(Icons.power_settings_new, 'Play from Library', _startAutomatedBroadcast, teal: true), _mi(Icons.schedule, 'Schedule at Exact Time', () { setState(() => _menuOpen = false); _scheduleTimedVideo(); }, teal: true),
-            ]))); }
+            Widget _bar() { return Container(height: 48, color: _bg, padding: const EdgeInsets.symmetric(horizontal: 10), child: Row(children: [ GestureDetector(onTap: () async { if (_onAir) { try { await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule'), headers: {'x-user-id': 'edger_user'}); setState(() => _onAir = false); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); } } else { setState(() => _menuOpen = true); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Use "Play from Library" to go live!'))); } }, child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 14), decoration: BoxDecoration(color: _onAir ? _red : const Color(0xFF1E293B), borderRadius: BorderRadius.circular(5)), child: Row(children: [Icon(_onAir ? Icons.stop_circle : Icons.podcasts, color: Colors.white, size: 16), const SizedBox(width: 6), Text(_onAir ? 'END STREAM' : 'GO LIVE', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.2))])) ), const SizedBox(width: 8), GestureDetector(onTap: () => setState(() => _showLiveCamera = !_showLiveCamera), child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 10), decoration: BoxDecoration(color: _showLiveCamera ? _blue.withOpacity(0.3) : Colors.white10, borderRadius: BorderRadius.circular(5), border: Border.all(color: _showLiveCamera ? _blue : Colors.white24)), child: Row(children: [Icon(_showLiveCamera ? Icons.videocam : Icons.videocam_off, color: _showLiveCamera ? _blue : Colors.white54, size: 14), const SizedBox(width: 4), Text('LIVE CAM', style: TextStyle(color: _showLiveCamera ? _blue : Colors.white54, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1))]))), const SizedBox(width: 8), GestureDetector(onTap: _toggleLiveSwitch, child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 10), decoration: BoxDecoration(color: _isLiveMode ? Colors.orangeAccent.withOpacity(0.3) : Colors.white10, borderRadius: BorderRadius.circular(5), border: Border.all(color: _isLiveMode ? Colors.orangeAccent : Colors.white24)), child: Row(children: [Icon(_isLiveMode ? Icons.switch_video : Icons.swap_horiz, color: _isLiveMode ? Colors.orangeAccent : Colors.white54, size: 14), const SizedBox(width: 4), Text(_isLiveMode ? 'LIVE MODE ON' : 'SWITCH TO CAM', style: TextStyle(color: _isLiveMode ? Colors.orangeAccent : Colors.white54, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1))]))), const Spacer(), GestureDetector(onTap: _take, child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 20), decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(5)), child: const Row(children: [Icon(Icons.fiber_manual_record, color: Colors.white, size: 10), SizedBox(width: 6), Text('TAKE', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 2.5))]))) ])); }
+            Widget _menu() { return Positioned(top: 0, right: 0, bottom: 0, child: Container(width: 220, color: _bg, child: Column(children: [ Container(height: 40, padding: const EdgeInsets.symmetric(horizontal: 12), decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: _grey))), child: Row(children: [const Text('Menu', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800)), const Spacer(), GestureDetector(onTap: () => setState(() => _menuOpen = false), child: const Icon(Icons.close, color: Colors.white, size: 16))])), _mi(Icons.dns, 'Server IP ($_serverIp)', _editServer), _mi(Icons.grid_view, 'Camera Count', () { setState(() => _menuOpen = false); _pick(); }), _mi(Icons.add, 'Add Camera', () { setState(() => _menuOpen = false); _add(); }), _mi(Icons.layers, 'Graphics', _openG, teal: true), _mi(Icons.link, 'Link Accounts', _openA), _mi(Icons.video_library, 'My Library (Upload Videos)', _openLibrary, teal: true), _mi(Icons.movie, 'Studio Canvas (Video + Cam)', _openStudioCanvas, teal: true), _mi(Icons.settings, 'Stream Settings (Key/Logos)', () { setState(() => _menuOpen = false); _openStreamSettings(); }), _mi(Icons.power_settings_new, 'Play from Library', _startAutomatedBroadcast, teal: true), _mi(Icons.schedule, 'Schedule at Exact Time', () { setState(() => _menuOpen = false); _scheduleTimedVideo(); }, teal: true) ])); }
             Widget _mi(IconData icon, String label, VoidCallback onTap, {bool teal = false}) { return InkWell(onTap: onTap, child: SizedBox(height: 38, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Row(children: [Icon(icon, color: teal ? Colors.tealAccent : Colors.white70, size: 16), const SizedBox(width: 10), Expanded(child: Text(label, style: TextStyle(color: teal ? Colors.tealAccent : Colors.white, fontSize: 11, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis))])))); }
           }
           class _CameraStream extends StatefulWidget { final int cameraNumber; final String serverIp; const _CameraStream({required this.cameraNumber, required this.serverIp}); @override State<_CameraStream> createState() => _CameraStreamState(); }
           class _CameraStreamState extends State<_CameraStream> {
             VideoPlayerController? _controller; bool _hasError = false;
             @override void initState() { super.initState(); _initPlayer(); }
-            Future<void> _initPlayer() async {
-              final url = Uri.parse("http://${widget.serverIp}:8888/cam${widget.cameraNumber}/index.m3u8"); _controller = VideoPlayerController.networkUrl(url);
-              try { await _controller!.initialize(); _controller!.setLooping(true); _controller!.setVolume(0); _controller!.play(); if (mounted) setState(() {}); } catch (e) { if (mounted) setState(() => _hasError = true); }
-            }
+            Future<void> _initPlayer() async { final url = Uri.parse("http://${widget.serverIp}:8888/live/cam${widget.cameraNumber}/index.m3u8"); _controller = VideoPlayerController.networkUrl(url); try { await _controller!.initialize(); _controller!.setLooping(true); _controller!.setVolume(0); _controller!.play(); if (mounted) setState(() {}); } catch (e) { if (mounted) setState(() => _hasError = true); } }
             @override void dispose() { _controller?.dispose(); super.dispose(); }
-            @override Widget build(BuildContext context) {
-              if (_hasError) { return const Center(child: Text('OFFLINE', style: TextStyle(color: Colors.white24, fontSize: 10))); }
-              if (_controller == null || !_controller!.value.isInitialized) { return const Center(child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white24)); }
-              return SizedBox.expand(child: FittedBox(fit: BoxFit.cover, child: SizedBox(width: _controller!.value.size.width, height: _controller!.value.size.height, child: VideoPlayer(_controller!))));
-            }
+            @override Widget build(BuildContext context) { if (_hasError) { return const Center(child: Text('OFFLINE', style: TextStyle(color: Colors.white24, fontSize: 10))); } if (_controller == null || !_controller!.value.isInitialized) { return const Center(child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white24)); } return SizedBox.expand(child: FittedBox(fit: BoxFit.cover, child: SizedBox(width: _controller!.value.size.width, height: _controller!.value.size.height, child: VideoPlayer(_controller!)))); }
           }
           D
 
