@@ -284,7 +284,9 @@ jobs:
                   if (_isUploading) const LinearProgressIndicator(color: Colors.tealAccent),
                   Expanded(child: _isLoading ? const Center(child: CircularProgressIndicator(color: Colors.tealAccent)) : _videos.isEmpty ? const Center(child: Text('No videos. Upload!', style: TextStyle(color: Colors.white54))) : ListView.builder(padding: const EdgeInsets.all(12), itemCount: _videos.length, itemBuilder: (ctx, i) { final v = _videos[i]; return Card(color: const Color(0xFF141418), child: ListTile(leading: const Icon(Icons.video_file, color: Colors.tealAccent), title: Text(v['name'] ?? 'Unknown', style: const TextStyle(color: Colors.white)), subtitle: const Text('In Cloud', style: TextStyle(color: Colors.white54, fontSize: 12)))); }))
                 ]),
-                floatingActionButton: FloatingActionButton.extended(onPressed: _isUploading ? null : _uploadVideo, backgroundColor: Colors.tealAccent, icon: const Icon(Icons.upload, color: Colors.black), label: const Text('UPLOAD', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold))),
+                floatingActionButton: FloatingActionButton.extended(
+                  onPressed: _isUploading ? null : () { _uploadVideo(); }, 
+                  backgroundColor: Colors.tealAccent, icon: const Icon(Icons.upload, color: Colors.black), label: const Text('UPLOAD', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold))),
               );
             }
           }
@@ -300,9 +302,9 @@ jobs:
               return Scaffold(backgroundColor: const Color(0xFF0A0A0F), body: SafeArea(child: SingleChildScrollView(padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16), child: Column(children: [
                 const SizedBox(height: 20), const Text('ABRIMAX STUDIO', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: 4)), const SizedBox(height: 4), const Text('What is this phone?', style: TextStyle(fontSize: 12, color: Colors.white54)), const SizedBox(height: 20),
                 Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  _card(context, Icons.videocam, 'CAMERA', const Color(0xFFEF4444), () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CameraScreen()))), const SizedBox(width: 16),
-                  _card(context, Icons.dashboard, 'DIRECTOR', const Color(0xFF3B82F6), () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DirectorScreen()))), const SizedBox(width: 16),
-                  _card(context, Icons.all_inclusive, 'BOTH', const Color(0xFF8B5CF6), () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DirectorScreen()))),
+                  _card(context, Icons.videocam, 'CAMERA', const Color(0xFFEF4444), () { Navigator.push(context, MaterialPageRoute(builder: (_) => const CameraScreen())); }), const SizedBox(width: 16),
+                  _card(context, Icons.dashboard, 'DIRECTOR', const Color(0xFF3B82F6), () { Navigator.push(context, MaterialPageRoute(builder: (_) => const DirectorScreen())); }), const SizedBox(width: 16),
+                  _card(context, Icons.all_inclusive, 'BOTH', const Color(0xFF8B5CF6), () { Navigator.push(context, MaterialPageRoute(builder: (_) => const DirectorScreen())); }),
                 ]),
               ]))));
             }
@@ -339,8 +341,8 @@ jobs:
                   Expanded(child: Container(margin: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(8), border: Border.all(color: _live ? Colors.red : Colors.white24, width: _live ? 3 : 1)), child: ClipRRect(borderRadius: BorderRadius.circular(6), child: isReady ? Center(child: CameraPreview(_cam!)) : const Center(child: CircularProgressIndicator(color: Colors.redAccent))))),
                   Container(width: 160, color: const Color(0xFF141418), padding: const EdgeInsets.all(8), child: SingleChildScrollView(child: Column(children: [
                     if (_usbMics.isNotEmpty) Container(margin: const EdgeInsets.only(bottom: 8), padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: Colors.teal.withOpacity(0.15), borderRadius: BorderRadius.circular(6), border: Border.all(color: Colors.tealAccent.withOpacity(0.4))), child: Row(children: [const Icon(Icons.usb, color: Colors.tealAccent, size: 14), const SizedBox(width: 4), Expanded(child: Text(_usbMics.first, style: const TextStyle(color: Colors.tealAccent, fontSize: 8), overflow: TextOverflow.ellipsis))])),
-                    _btn(_live ? Icons.stop : Icons.play_arrow, _live ? 'STOP' : 'GO LIVE', _live ? Colors.red : Colors.green, 78, _toggleLive), const SizedBox(height: 8),
-                    _btn(_recording ? Icons.stop : Icons.fiber_manual_record, _recording ? 'STOP REC' : 'RECORD', _recording ? Colors.red : Colors.orangeAccent, 64, _toggleRecord), const SizedBox(height: 8),
+                    _btn(_live ? Icons.stop : Icons.play_arrow, _live ? 'STOP' : 'GO LIVE', _live ? Colors.red : Colors.green, 78, () { _toggleLive(); }), const SizedBox(height: 8),
+                    _btn(_recording ? Icons.stop : Icons.fiber_manual_record, _recording ? 'STOP REC' : 'RECORD', _recording ? Colors.red : Colors.orangeAccent, 64, () { _toggleRecord(); }), const SizedBox(height: 8),
                     _btn(Icons.high_quality, _quality, Colors.blue, 64, _cycleQ), const SizedBox(height: 8),
                     _btn(Icons.speed, '$_fps FPS', Colors.tealAccent, 64, _cycleF), const SizedBox(height: 8),
                     _btn(_micMuted ? Icons.mic_off : Icons.mic, _micMuted ? 'MUTED' : 'MIC ON', _micMuted ? Colors.redAccent : Colors.greenAccent, 64, () async { await StreamingService.muteMic(!_micMuted); _cam = StreamingService.controller; if (mounted) setState(() => _micMuted = !_micMuted); }), const SizedBox(height: 8),
@@ -377,8 +379,8 @@ jobs:
             Widget _canvas() { return Padding(padding: const EdgeInsets.all(12), child: LayoutBuilder(builder: (context, cons) { final box = Size(cons.maxWidth, cons.maxHeight); return GestureDetector(onPanUpdate: (d) => _move(d.delta, box), child: Container(decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0xFFF5C542), width: 1.5)), child: Stack(children: [const Center(child: Text('DRAG TO MOVE', style: TextStyle(color: Colors.white24, fontSize: 10, letterSpacing: 3))), OverlayRenderer(overlays: _items), ..._buildHandles(box)]))); })); }
             Widget _swatchBar() { return Container(height: 44, color: const Color(0xFF141418), child: ListView(scrollDirection: Axis.horizontal, children: _swatches.map((c) => GestureDetector(onTap: () => _setColor(c), child: Container(margin: const EdgeInsets.all(6), width: 32, height: 32, decoration: BoxDecoration(color: Color(c), shape: BoxShape.circle, border: Border.all(color: Colors.white24, width: 2))))).toList())); }
             Widget _list() { if (_items.isEmpty) { return const Center(child: Text('No overlays. Tap + to add.', style: TextStyle(color: Colors.white54, fontSize: 12))); } return ListView.builder(itemCount: _items.length, itemBuilder: (_, i) { final it = _items[i]; return ListTile(selected: _sel == it.id, selectedTileColor: Colors.white10, title: Text(it.content, style: const TextStyle(color: Colors.white)), trailing: Row(mainAxisSize: MainAxisSize.min, children: [IconButton(icon: const Icon(Icons.remove_circle_outline, color: Colors.white70), onPressed: () => setState(() => it.size = (it.size - 4).clamp(6.0, 200.0))), IconButton(icon: const Icon(Icons.add_circle_outline, color: Colors.white70), onPressed: () => setState(() => it.size = (it.size + 4).clamp(6.0, 200.0))), IconButton(icon: const Icon(Icons.delete_outline, color: Colors.redAccent), onPressed: () => setState(() => _items.removeWhere((e) => e.id == it.id)))]), onTap: () => setState(() => _sel = it.id)); }); }
-            Widget _bottomBar() { return Container(height: 50, color: const Color(0xFF0A0A0F), padding: const EdgeInsets.symmetric(horizontal: 12), child: Row(children: [FilledButton.icon(onPressed: _save, icon: const Icon(Icons.save), label: const Text('SAVE')), const Spacer(), FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: Colors.redAccent), onPressed: _pushLive, icon: const Icon(Icons.live_tv), label: const Text('PUSH LIVE')), const Spacer(), FilledButton.icon(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.check), label: const Text('DONE'))])); }
-            @override Widget build(BuildContext context) { return Scaffold(backgroundColor: const Color(0xFF0A0A0F), appBar: AppBar(title: const Text('GRAPHICS', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)), backgroundColor: const Color(0xFF141418), actions: [IconButton(icon: const Icon(Icons.add, color: Colors.tealAccent), onPressed: _addText), IconButton(icon: const Icon(Icons.fiber_manual_record, color: Colors.redAccent), onPressed: _addLive), IconButton(icon: const Icon(Icons.view_headline, color: Colors.orangeAccent), onPressed: _addLowerThird)]), body: Column(children: [Expanded(flex: 3, child: _canvas()), if (_sel != null) _swatchBar(), Expanded(flex: 2, child: _list()), _bottomBar()])); }
+            Widget _bottomBar() { return Container(height: 50, color: const Color(0xFF0A0A0F), padding: const EdgeInsets.symmetric(horizontal: 12), child: Row(children: [FilledButton.icon(onPressed: () { _save(); }, icon: const Icon(Icons.save), label: const Text('SAVE')), const Spacer(), FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: Colors.redAccent), onPressed: () { _pushLive(); }, icon: const Icon(Icons.live_tv), label: const Text('PUSH LIVE')), const Spacer(), FilledButton.icon(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.check), label: const Text('DONE'))])); }
+            @override Widget build(BuildContext context) { return Scaffold(backgroundColor: const Color(0xFF0A0A0F), appBar: AppBar(title: const Text('GRAPHICS', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)), backgroundColor: const Color(0xFF141418), actions: [IconButton(icon: const Icon(Icons.add, color: Colors.tealAccent), onPressed: () { _addText(); }), IconButton(icon: const Icon(Icons.fiber_manual_record, color: Colors.redAccent), onPressed: _addLive), IconButton(icon: const Icon(Icons.view_headline, color: Colors.orangeAccent), onPressed: _addLowerThird)]), body: Column(children: [Expanded(flex: 3, child: _canvas()), if (_sel != null) _swatchBar(), Expanded(flex: 2, child: _list()), _bottomBar()])); }
           }
           D
 
@@ -412,8 +414,8 @@ jobs:
               if (_loading) { return const Scaffold(backgroundColor: Color(0xFF0A0A0F), body: Center(child: CircularProgressIndicator())); }
               return Scaffold(backgroundColor: const Color(0xFF0A0A0F), appBar: AppBar(title: const Text('LINK ACCOUNTS', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)), backgroundColor: const Color(0xFF141418)), body: GridView.count(padding: const EdgeInsets.all(16), crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 1.5, children: _platforms.keys.map((name) {
                 final linked = _items.where((a) => a.platform == name).toList(); final isLinked = linked.isNotEmpty; final color = _color(name);
-                return InkWell(onTap: () => _link(name), borderRadius: BorderRadius.circular(12), child: Container(decoration: BoxDecoration(color: color.withOpacity(0.10), borderRadius: BorderRadius.circular(12), border: Border.all(color: isLinked ? color : Colors.white24, width: 2)), child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                  Row(children: [Icon(_icon(name), color: color, size: 28), const Spacer(), if (isLinked) GestureDetector(onTap: () => _unlink(linked.first.id), child: const Icon(Icons.close, color: Colors.white54, size: 18))]),
+                return InkWell(onTap: () { _link(name); }, borderRadius: BorderRadius.circular(12), child: Container(decoration: BoxDecoration(color: color.withOpacity(0.10), borderRadius: BorderRadius.circular(12), border: Border.all(color: isLinked ? color : Colors.white24, width: 2)), child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  Row(children: [Icon(_icon(name), color: color, size: 28), const Spacer(), if (isLinked) GestureDetector(onTap: () { _unlink(linked.first.id); }, child: const Icon(Icons.close, color: Colors.white54, size: 18))]),
                   Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(name, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 1)), const SizedBox(height: 2), Text(isLinked ? linked.first.name : 'Tap to paste key', style: TextStyle(color: isLinked ? color : Colors.white54, fontSize: 11), overflow: TextOverflow.ellipsis)])
                 ]))));
               }).toList()));
@@ -470,7 +472,7 @@ jobs:
                   const SizedBox(height: 8),
                   Row(children: [const Text('Ticker BG:', style: TextStyle(color: Colors.white70, fontSize: 12)), const SizedBox(width: 8), Row(children: [Colors.redAccent, Colors.blue, Colors.black, Colors.transparent].map((c) => GestureDetector(onTap: () => setState(() => _tickerBgColor = c), child: Container(margin: const EdgeInsets.symmetric(horizontal: 4), width: 20, height: 20, decoration: BoxDecoration(color: c, shape: BoxShape.circle, border: Border.all(color: Colors.white24))))).toList()), const Spacer(), ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: _showCamera ? Colors.blueGrey : Colors.orange), onPressed: () => setState(() => _showCamera = !_showCamera), icon: Icon(_showCamera ? Icons.videocam : Icons.videocam_off), label: Text(_showCamera ? 'Hide Camera' : 'Show Camera'))]),
                   const SizedBox(height: 8),
-                  Row(children: [Expanded(child: TextField(controller: _keyController, style: const TextStyle(color: Colors.white, fontSize: 12), decoration: const InputDecoration(labelText: 'YouTube Stream Key', labelStyle: TextStyle(color: Colors.white54), isDense: true))), const SizedBox(width: 8), ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.green), onPressed: _toggleStream, icon: const Icon(Icons.podcasts), label: const Text('GO LIVE'))])
+                  Row(children: [Expanded(child: TextField(controller: _keyController, style: const TextStyle(color: Colors.white, fontSize: 12), decoration: const InputDecoration(labelText: 'YouTube Stream Key', labelStyle: TextStyle(color: Colors.white54), isDense: true))), const SizedBox(width: 8), ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.green), onPressed: () { _toggleStream(); }, icon: const Icon(Icons.podcasts), label: const Text('GO LIVE'))])
                 ]))))]));
             }
           }
@@ -494,18 +496,23 @@ jobs:
           import 'package:shared_preferences/shared_preferences.dart';
           import 'package:webview_flutter/webview_flutter.dart';
           import '../models/overlay_item.dart'; import '../models/account_item.dart'; import '../services/overlay_store.dart'; import '../services/account_store.dart'; import '../widgets/overlay_renderer.dart'; import '../widgets/live_camera.dart'; import 'graphics_editor.dart'; import 'accounts_screen.dart'; import 'studio_canvas_screen.dart'; import 'library_screen.dart';
+          
           const _bg = Color(0xFF0A0A0F); const _panel = Color(0xFF141418); const _red = Color(0xFFEF4444); const _yellow = Color(0xFFF5C542); const _blue = Color(0xFF3B82F6); const _grey = Color(0x14FFFFFF);
+          
           class DirectorScreen extends StatefulWidget { const DirectorScreen({super.key}); @override State<DirectorScreen> createState() => _DirectorScreenState(); }
+          
           class _DirectorScreenState extends State<DirectorScreen> {
-            bool _onAir = false; bool _menuOpen = false; bool _showLiveCamera = false; int _tab = 0; int _sec = 0; int _camCount = 6; bool _isLiveMode = false; bool _useGraphics = true;
+            bool _onAir = false; bool _menuOpen = false; bool _showLiveCamera = false; int _tab = 0; int _sec = 0; int _camCount = 6; bool _isLiveMode = false;
             Timer? _ticker;
             final List<bool> _live = List.generate(15, (i) => i == 0);
             final List<bool> _prev = List.generate(15, (i) => i == 1);
             final _overlayStore = OverlayStore(); List<OverlayItem> _overlays = [];
             String _serverIp = "13.140.90.83"; 
             String _savedYtKey = ""; String _savedYtVideoId = ""; String _savedLogoUrl = "https://upload.wikimedia.org/wikipedia/commons/2/20/YouTube_2024.svg"; String _savedLogoPos = "Top Right"; List<String> _savedBannerUrls = []; String _savedBannerPos = "Bottom Left"; String _savedTickerText = "";
+            
             @override void initState() { super.initState(); _loadSettings(); _ticker = Timer.periodic(const Duration(seconds: 1), (_) { if (mounted) setState(() => _sec++); }); _loadOverlays(); }
             @override void dispose() { _ticker?.cancel(); super.dispose(); }
+            
             Future<void> _loadSettings() async {
               final prefs = await SharedPreferences.getInstance();
               setState(() {
@@ -527,10 +534,10 @@ jobs:
               setState(() { _live[l] = false; _prev[l] = true; _prev[p] = false; _live[p] = true; });
               try { final response = await http.post(Uri.parse('http://$_serverIp:3000/switch-to-cam'), headers: {'Content-Type': 'application/json', 'x-user-id': 'edger_user'}, body: jsonEncode({'camPath': 'cam${p + 1}', 'platforms': ['rtmp://a.rtmp.youtube.com/live2/$_savedYtKey']})); if (response.statusCode == 200 && mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('TAKE Successful! cam${p+1} is live.'))); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Server Error: $e'))); }
             }
-
             void _selPrev(int i) { setState(() { for (var k = 0; k < _camCount; k++) _prev[k] = false; _prev[i] = true; }); }
             void _setLive(int i) { setState(() { for (var k = 0; k < _camCount; k++) { _live[k] = false; _prev[k] = false; } _live[i] = true; }); }
             void _add() { if (_camCount >= 15) return; setState(() => _camCount++); }
+            
             Future<void> _rm(int i) async {
               if (_camCount <= 1) return;
               final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(backgroundColor: _panel, title: const Text('Remove camera?'), content: Text('Remove CAM ${i + 1}?'), actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('REMOVE'))]));
@@ -544,11 +551,13 @@ jobs:
             void _openA() { setState(() => _menuOpen = false); Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountsScreen())); }
             void _openLibrary() { setState(() => _menuOpen = false); Navigator.push(context, MaterialPageRoute(builder: (_) => LibraryScreen(serverIp: _serverIp))); }
             void _openStudioCanvas() { setState(() => _menuOpen = false); Navigator.push(context, MaterialPageRoute(builder: (_) => const StudioCanvasScreen())); }
+            
             Future<void> _editServer() async {
               final ctrl = TextEditingController(text: _serverIp);
               final res = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(backgroundColor: _panel, title: const Text('Server IP Address', style: TextStyle(color: Colors.white)), content: TextField(controller: ctrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(hintText: 'e.g. 192.168.1.100', hintStyle: TextStyle(color: Colors.white24))), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('SAVE'))]));
               if (res != null && res.isNotEmpty) { setState(() => _serverIp = res.trim()); }
             }
+            
             Future<void> _openStreamSettings() async {
               final rtmpCtrl = TextEditingController(text: _savedYtKey); final videoIdCtrl = TextEditingController(text: _savedYtVideoId); final logoCtrl = TextEditingController(text: _savedLogoUrl); final bannerCtrl = TextEditingController(text: _savedBannerUrls.join('\n')); final tickerCtrl = TextEditingController(text: _savedTickerText); String logoPos = _savedLogoPos; String bannerPos = _savedBannerPos;
               await showDialog(context: context, builder: (ctx) => StatefulBuilder(builder: (context, setDialogState) {
@@ -563,6 +572,7 @@ jobs:
                 ])), actions: [FilledButton(onPressed: () { final bannerList = bannerCtrl.text.split('\n').where((s) => s.trim().isNotEmpty).toList(); _saveSettings(rtmpCtrl.text.trim(), videoIdCtrl.text.trim(), logoCtrl.text.trim(), logoPos, bannerList, bannerPos, tickerCtrl.text.trim()); Navigator.pop(ctx); }, child: const Text('SAVE SETTINGS'))]);
               }));
             }
+            
             Future<void> _toggleLiveSwitch() async {
                if (!_isLiveMode) {
                    final camCtrl = TextEditingController(text: "1");
@@ -573,6 +583,7 @@ jobs:
                    try { final response = await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule'), headers: {'x-user-id': 'edger_user'}); if (response.statusCode == 200 && mounted) setState(() => _isLiveMode = false); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); }
                }
             }
+            
             Future<void> _startAutomatedBroadcast() async {
               if (_savedYtKey.isEmpty) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please set your Stream Settings first!'))); _openStreamSettings(); return; }
               final store = AccountStore(); final linkedAccounts = await store.loadAll();
@@ -598,6 +609,7 @@ jobs:
                 } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to connect: $e'))); }
               }
             }
+            
             Future<void> _scheduleTimedVideo() async {
               if (_savedYtKey.isEmpty) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please set your Stream Settings first!'))); _openStreamSettings(); return; }
               TimeOfDay? pickedTime;
@@ -619,6 +631,7 @@ jobs:
                 } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to connect: $e'))); }
               }
             }
+            
             @override Widget build(BuildContext context) {
               return Scaffold(backgroundColor: _bg, body: SafeArea(child: Stack(children: [
                 Column(children: [ _top(), if (_showLiveCamera) Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(8), child: Container(margin: const EdgeInsets.all(4), decoration: BoxDecoration(border: Border.all(color: _yellow, width: 1.5)), child: const LiveCamera(front: false)))), if (!_showLiveCamera) _strip(), _tabs(), Expanded(child: _tab == 1 ? _grid() : _prog()), _bar() ]),
@@ -633,11 +646,40 @@ jobs:
             Widget _tabBtn(String label, int idx) { final a = _tab == idx; return GestureDetector(onTap: () => setState(() => _tab = idx), child: Text(label, style: TextStyle(color: a ? Colors.white : Colors.white54, fontSize: 9, fontWeight: a ? FontWeight.w900 : FontWeight.w600, letterSpacing: 2))); }
             Widget _prog() { if (_savedYtVideoId.isNotEmpty) { return WebViewWidget(controller: WebViewController()..setJavaScriptMode(JavaScriptMode.unrestricted)..loadRequest(Uri.parse('https://www.youtube.com/embed/$_savedYtVideoId?autoplay=1&mute=1'))); } final pi = _prev.indexOf(true); final pn = pi >= 0 ? pi + 1 : 1; return Padding(padding: const EdgeInsets.fromLTRB(10, 2, 10, 2), child: Container(decoration: BoxDecoration(color: Colors.black, border: Border.all(color: _yellow, width: 1.5), borderRadius: BorderRadius.circular(4)), child: Stack(children: [_CameraStream(cameraNumber: pn, serverIp: _serverIp), Positioned(top: 6, left: 6, child: Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(2)), child: const Text('PROGRAM', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1.5)))), if (_overlays.isNotEmpty) Positioned.fill(child: OverlayRenderer(overlays: _overlays)), Positioned(right: 8, bottom: 8, width: 200, height: 112, child: Container(decoration: BoxDecoration(color: Colors.black, border: Border.all(color: _yellow, width: 1.5), borderRadius: BorderRadius.circular(3)), child: Stack(children: [_CameraStream(cameraNumber: pn, serverIp: _serverIp), Positioned(top: 3, left: 3, child: Container(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1), decoration: BoxDecoration(color: _yellow, borderRadius: BorderRadius.circular(2)), child: const Text('PREVIEW', style: TextStyle(color: Colors.black, fontSize: 6, fontWeight: FontWeight.w900, letterSpacing: 1))))])))]))); }
             Widget _grid() { int c; if (_camCount <= 4) c = 2; else if (_camCount <= 9) c = 3; else if (_camCount <= 12) c = 4; else c = 5; return Padding(padding: const EdgeInsets.all(10), child: GridView.builder(itemCount: _camCount, gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: c, mainAxisSpacing: 6, crossAxisSpacing: 6, childAspectRatio: 16 / 9), itemBuilder: (_, i) { final l = _live[i]; final p = _prev[i]; final bc = l ? _red : (p ? _yellow : _grey); return GestureDetector(onTap: () => _selPrev(i), onLongPress: () => _rm(i), child: Container(decoration: BoxDecoration(color: Colors.black, border: Border.all(color: bc, width: 1.5), borderRadius: BorderRadius.circular(3)), child: Stack(children: [_CameraStream(cameraNumber: i + 1, serverIp: _serverIp), Positioned(bottom: 4, left: 4, child: Text('CAM ${i + 1}', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 2)))]))); })); }
-            Widget _bar() { return Container(height: 48, color: _bg, padding: const EdgeInsets.symmetric(horizontal: 10), child: Row(children: [ GestureDetector(onTap: () async { if (_onAir) { try { await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule'), headers: {'x-user-id': 'edger_user'}); setState(() => _onAir = false); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); } } else { setState(() => _menuOpen = true); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Use "Play from Library" to go live!'))); } }, child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 14), decoration: BoxDecoration(color: _onAir ? _red : const Color(0xFF1E293B), borderRadius: BorderRadius.circular(5)), child: Row(children: [Icon(_onAir ? Icons.stop_circle : Icons.podcasts, color: Colors.white, size: 16), const SizedBox(width: 6), Text(_onAir ? 'END STREAM' : 'GO LIVE', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.2))])) ), const SizedBox(width: 8), GestureDetector(onTap: () => setState(() => _showLiveCamera = !_showLiveCamera), child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 10), decoration: BoxDecoration(color: _showLiveCamera ? _blue.withOpacity(0.3) : Colors.white10, borderRadius: BorderRadius.circular(5), border: Border.all(color: _showLiveCamera ? _blue : Colors.white24)), child: Row(children: [Icon(_showLiveCamera ? Icons.videocam : Icons.videocam_off, color: _showLiveCamera ? _blue : Colors.white54, size: 14), const SizedBox(width: 4), Text('LIVE CAM', style: TextStyle(color: _showLiveCamera ? _blue : Colors.white54, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1))]))), const SizedBox(width: 8), GestureDetector(onTap: () => _toggleLiveSwitch(), child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 10), decoration: BoxDecoration(color: _isLiveMode ? Colors.orangeAccent.withOpacity(0.3) : Colors.white10, borderRadius: BorderRadius.circular(5), border: Border.all(color: _isLiveMode ? Colors.orangeAccent : Colors.white24)), child: Row(children: [Icon(_isLiveMode ? Icons.switch_video : Icons.swap_horiz, color: _isLiveMode ? Colors.orangeAccent : Colors.white54, size: 14), const SizedBox(width: 4), Text(_isLiveMode ? 'LIVE MODE ON' : 'SWITCH TO CAM', style: TextStyle(color: _isLiveMode ? Colors.orangeAccent : Colors.white54, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1))]))), const Spacer(), GestureDetector(onTap: () => _take(), child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 20), decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(5)), child: const Row(children: [Icon(Icons.fiber_manual_record, color: Colors.white, size: 10), SizedBox(width: 6), Text('TAKE', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 2.5))]))) ])); }
-            Widget _menu() { return Positioned(top: 0, right: 0, bottom: 0, child: Container(width: 220, color: _bg, child: Column(children: [ Container(height: 40, padding: const EdgeInsets.symmetric(horizontal: 12), decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: _grey))), child: Row(children: [const Text('Menu', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800)), const Spacer(), GestureDetector(onTap: () => setState(() => _menuOpen = false), child: const Icon(Icons.close, color: Colors.white, size: 16))])), _mi(Icons.dns, 'Server IP ($_serverIp)', () => _editServer()), _mi(Icons.grid_view, 'Camera Count', () { setState(() => _menuOpen = false); _pick(); }), _mi(Icons.add, 'Add Camera', () { setState(() => _menuOpen = false); _add(); }), _mi(Icons.layers, 'Graphics', () => _openG(), teal: true), _mi(Icons.link, 'Link Accounts', _openA), _mi(Icons.video_library, 'My Library (Upload Videos)', _openLibrary, teal: true), _mi(Icons.movie, 'Studio Canvas (Video + Cam)', _openStudioCanvas, teal: true), _mi(Icons.settings, 'Stream Settings (Key/Logos)', () { setState(() => _menuOpen = false); _openStreamSettings(); }), _mi(Icons.power_settings_new, 'Play from Library', () { setState(() => _menuOpen = false); _startAutomatedBroadcast(); }, teal: true), _mi(Icons.schedule, 'Schedule at Exact Time', () { setState(() => _menuOpen = false); _scheduleTimedVideo(); }, teal: true) ])); }
+            
+            Widget _bar() { 
+              return Container(height: 48, color: _bg, padding: const EdgeInsets.symmetric(horizontal: 10), child: Row(children: [ 
+                GestureDetector(onTap: () async { if (_onAir) { try { await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule'), headers: {'x-user-id': 'edger_user'}); setState(() => _onAir = false); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); } } else { setState(() => _menuOpen = true); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Use "Play from Library" to go live!'))); } }, child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 14), decoration: BoxDecoration(color: _onAir ? _red : const Color(0xFF1E293B), borderRadius: BorderRadius.circular(5)), child: Row(children: [Icon(_onAir ? Icons.stop_circle : Icons.podcasts, color: Colors.white, size: 16), const SizedBox(width: 6), Text(_onAir ? 'END STREAM' : 'GO LIVE', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.2))])) ), 
+                const SizedBox(width: 8), 
+                GestureDetector(onTap: () => setState(() => _showLiveCamera = !_showLiveCamera), child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 10), decoration: BoxDecoration(color: _showLiveCamera ? _blue.withOpacity(0.3) : Colors.white10, borderRadius: BorderRadius.circular(5), border: Border.all(color: _showLiveCamera ? _blue : Colors.white24)), child: Row(children: [Icon(_showLiveCamera ? Icons.videocam : Icons.videocam_off, color: _showLiveCamera ? _blue : Colors.white54, size: 14), const SizedBox(width: 4), Text('LIVE CAM', style: TextStyle(color: _showLiveCamera ? _blue : Colors.white54, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1))]))), 
+                const SizedBox(width: 8), 
+                GestureDetector(onTap: () { _toggleLiveSwitch(); }, child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 10), decoration: BoxDecoration(color: _isLiveMode ? Colors.orangeAccent.withOpacity(0.3) : Colors.white10, borderRadius: BorderRadius.circular(5), border: Border.all(color: _isLiveMode ? Colors.orangeAccent : Colors.white24)), child: Row(children: [Icon(_isLiveMode ? Icons.switch_video : Icons.swap_horiz, color: _isLiveMode ? Colors.orangeAccent : Colors.white54, size: 14), const SizedBox(width: 4), Text(_isLiveMode ? 'LIVE MODE ON' : 'SWITCH TO CAM', style: TextStyle(color: _isLiveMode ? Colors.orangeAccent : Colors.white54, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1))]))), 
+                const Spacer(), 
+                GestureDetector(onTap: () { _take(); }, child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 20), decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(5)), child: const Row(children: [Icon(Icons.fiber_manual_record, color: Colors.white, size: 10), SizedBox(width: 6), Text('TAKE', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 2.5))]))) 
+              ])); 
+            }
+            
+            Widget _menu() { 
+              return Positioned(top: 0, right: 0, bottom: 0, child: Container(width: 220, color: _bg, child: Column(children: [ 
+                Container(height: 40, padding: const EdgeInsets.symmetric(horizontal: 12), decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: _grey))), child: Row(children: [const Text('Menu', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800)), const Spacer(), GestureDetector(onTap: () => setState(() => _menuOpen = false), child: const Icon(Icons.close, color: Colors.white, size: 16))])), 
+                _mi(Icons.dns, 'Server IP ($_serverIp)', () { _editServer(); }), 
+                _mi(Icons.grid_view, 'Camera Count', () { setState(() => _menuOpen = false); _pick(); }), 
+                _mi(Icons.add, 'Add Camera', () { setState(() => _menuOpen = false); _add(); }), 
+                _mi(Icons.layers, 'Graphics', () { _openG(); }, teal: true), 
+                _mi(Icons.link, 'Link Accounts', _openA), 
+                _mi(Icons.video_library, 'My Library (Upload Videos)', _openLibrary, teal: true), 
+                _mi(Icons.movie, 'Studio Canvas (Video + Cam)', _openStudioCanvas, teal: true), 
+                _mi(Icons.settings, 'Stream Settings (Key/Logos)', () { setState(() => _menuOpen = false); _openStreamSettings(); }), 
+                _mi(Icons.power_settings_new, 'Play from Library', () { setState(() => _menuOpen = false); _startAutomatedBroadcast(); }, teal: true), 
+                _mi(Icons.schedule, 'Schedule at Exact Time', () { setState(() => _menuOpen = false); _scheduleTimedVideo(); }, teal: true) 
+              ]))); 
+            }
+            
             Widget _mi(IconData icon, String label, VoidCallback onTap, {bool teal = false}) { return InkWell(onTap: onTap, child: SizedBox(height: 38, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Row(children: [Icon(icon, color: teal ? Colors.tealAccent : Colors.white70, size: 16), const SizedBox(width: 10), Expanded(child: Text(label, style: TextStyle(color: teal ? Colors.tealAccent : Colors.white, fontSize: 11, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis))])))); }
           }
+          
           class _CameraStream extends StatefulWidget { final int cameraNumber; final String serverIp; const _CameraStream({required this.cameraNumber, required this.serverIp}); @override State<_CameraStream> createState() => _CameraStreamState(); }
+          
           class _CameraStreamState extends State<_CameraStream> {
             VideoPlayerController? _controller; bool _hasError = false;
             @override void initState() { super.initState(); _initPlayer(); }
