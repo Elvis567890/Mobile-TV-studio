@@ -98,7 +98,8 @@ jobs:
           void main() async {
             WidgetsFlutterBinding.ensureInitialized();
             await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp, DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
-            await [Permission.camera, Permission.microphone, Permission.notification, Permission.storage].request();
+            // FIXED: Added videos and photos permissions for Android 13+
+            await [Permission.camera, Permission.microphone, Permission.notification, Permission.storage, Permission.videos, Permission.photos].request();
             runApp(const App());
           }
           class App extends StatelessWidget {
@@ -254,39 +255,91 @@ jobs:
 
             Future<void> _fetchLibrary() async {
               setState(() => _isLoading = true);
-              try { final res = await http.get(Uri.parse('http://${widget.serverIp}:3000/library/$_userId')); if (res.statusCode == 200) { setState(() => _videos = jsonDecode(res.body)); } } catch (e) { debugPrint('Error: $e'); }
+              try { 
+                final res = await http.get(Uri.parse('http://${widget.serverIp}:3000/library/$_userId')); 
+                if (res.statusCode == 200) { setState(() => _videos = jsonDecode(res.body)); } 
+              } catch (e) { 
+                debugPrint('Error: $e'); 
+                if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Server Error: $e')));
+              }
               setState(() => _isLoading = false);
             }
 
             Future<void> _uploadVideo() async {
+              if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Opening Gallery...')));
+              
               FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.video);
+              
               if (result != null && result.files.single.path != null) {
                 setState(() => _isUploading = true);
                 final file = File(result.files.single.path!);
                 final fileName = result.files.single.name;
+                
+                if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Uploading: $fileName')));
+                
                 var request = http.MultipartRequest('POST', Uri.parse('http://${widget.serverIp}:3000/upload-video'));
                 request.headers['x-user-id'] = _userId;
                 request.files.add(await http.MultipartFile.fromPath('video', file.path, filename: fileName));
+                
                 try {
                   var streamedResponse = await request.send();
                   var response = await http.Response.fromStream(streamedResponse);
-                  if (response.statusCode == 200) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Video robbed to Cloud!'))); _fetchLibrary(); } else { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Upload failed'))); }
-                } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'))); }
+                  
+                  if (response.statusCode == 200) { 
+                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ Video robbed to Cloud!')));
+                    _fetchLibrary(); 
+                  } else { 
+                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Upload failed. Server said: ${response.body}'))); 
+                  }
+                } catch (e) { 
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Network Error: $e'))); 
+                }
                 setState(() => _isUploading = false);
+              } else {
+                if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No video selected.')));
               }
             }
 
             @override Widget build(BuildContext context) {
               return Scaffold(
                 backgroundColor: const Color(0xFF0A0A0F),
-                appBar: AppBar(title: const Text('MY LIBRARY', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)), backgroundColor: const Color(0xFF141418)),
+                appBar: AppBar(
+                  title: const Text('MY LIBRARY', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)), 
+                  backgroundColor: const Color(0xFF141418),
+                  actions: [
+                    IconButton(icon: const Icon(Icons.refresh, color: Colors.tealAccent), onPressed: _fetchLibrary)
+                  ]
+                ),
                 body: Column(children: [
                   if (_isUploading) const LinearProgressIndicator(color: Colors.tealAccent),
-                  Expanded(child: _isLoading ? const Center(child: CircularProgressIndicator(color: Colors.tealAccent)) : _videos.isEmpty ? const Center(child: Text('No videos. Upload!', style: TextStyle(color: Colors.white54))) : ListView.builder(padding: const EdgeInsets.all(12), itemCount: _videos.length, itemBuilder: (ctx, i) { final v = _videos[i]; return Card(color: const Color(0xFF141418), child: ListTile(leading: const Icon(Icons.video_file, color: Colors.tealAccent), title: Text(v['name'] ?? 'Unknown', style: const TextStyle(color: Colors.white)), subtitle: const Text('In Cloud', style: TextStyle(color: Colors.white54, fontSize: 12)))); }))
+                  Expanded(
+                    child: _isLoading 
+                      ? const Center(child: CircularProgressIndicator(color: Colors.tealAccent)) 
+                      : _videos.isEmpty 
+                        ? const Center(child: Text('No videos found.\nUpload one to get started!', textAlign: TextAlign.center, style: TextStyle(color: Colors.white54))) 
+                        : ListView.builder(
+                            padding: const EdgeInsets.all(12), 
+                            itemCount: _videos.length, 
+                            itemBuilder: (ctx, i) { 
+                              final v = _videos[i]; 
+                              return Card(
+                                color: const Color(0xFF141418), 
+                                child: ListTile(
+                                  leading: const Icon(Icons.video_file, color: Colors.tealAccent), 
+                                  title: Text(v['name'] ?? 'Unknown', style: const TextStyle(color: Colors.white)), 
+                                  subtitle: const Text('In Cloud', style: TextStyle(color: Colors.white54, fontSize: 12))
+                                )
+                              ); 
+                            }
+                          )
+                  )
                 ]),
                 floatingActionButton: FloatingActionButton.extended(
                   onPressed: _isUploading ? null : () { _uploadVideo(); }, 
-                  backgroundColor: Colors.tealAccent, icon: const Icon(Icons.upload, color: Colors.black), label: const Text('UPLOAD', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold))),
+                  backgroundColor: Colors.tealAccent, 
+                  icon: const Icon(Icons.upload, color: Colors.black), 
+                  label: const Text('UPLOAD', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold))
+                ),
               );
             }
           }
@@ -804,6 +857,8 @@ jobs:
               <uses-permission android:name="android.permission.WAKE_LOCK" />
               <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
               <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+              <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+              <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
               <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
               <uses-permission android:name="android.permission.BLUETOOTH" />
               <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
