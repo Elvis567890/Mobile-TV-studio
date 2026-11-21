@@ -57,6 +57,7 @@ jobs:
             permission_handler: ^11.3.1
             wakelock_plus: ^1.2.8
             http: ^1.2.0
+            dio: ^5.4.0
             video_player: ^2.9.1
             webview_flutter: ^4.7.0
             file_picker: ^8.0.0
@@ -235,9 +236,9 @@ jobs:
           cat > lib/screens/library_screen.dart << 'D'
           import 'package:flutter/material.dart';
           import 'package:file_picker/file_picker.dart';
+          import 'package:dio/dio.dart';
           import 'package:http/http.dart' as http;
           import 'dart:convert';
-          import 'dart:io';
 
           class LibraryScreen extends StatefulWidget {
             final String serverIp;
@@ -248,6 +249,7 @@ jobs:
             List<dynamic> _videos = [];
             bool _isLoading = false;
             bool _isUploading = false;
+            double _uploadProgress = 0.0;
             String _userId = "edger_user";
 
             @override void initState() { super.initState(); _fetchLibrary(); }
@@ -265,35 +267,40 @@ jobs:
             }
 
             Future<void> _uploadVideo() async {
-              if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Opening Gallery...')));
-              
               FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.video);
               
               if (result != null && result.files.single.path != null) {
-                setState(() => _isUploading = true);
-                final file = File(result.files.single.path!);
+                setState(() { _isUploading = true; _uploadProgress = 0.0; });
+                final file = result.files.single.path!;
                 final fileName = result.files.single.name;
                 
-                if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Uploading: $fileName')));
-                
-                var request = http.MultipartRequest('POST', Uri.parse('http://${widget.serverIp}:3000/upload-video'));
-                request.headers['x-user-id'] = _userId;
-                request.files.add(await http.MultipartFile.fromPath('video', file.path, filename: fileName));
-                
+                Dio dio = Dio();
+                FormData formData = FormData.fromMap({
+                  'video': await MultipartFile.fromFile(file, filename: fileName),
+                });
+
                 try {
-                  var streamedResponse = await request.send();
-                  var response = await http.Response.fromStream(streamedResponse);
+                  var response = await dio.post(
+                    'http://${widget.serverIp}:3000/upload-video',
+                    data: formData,
+                    options: Options(headers: {'x-user-id': _userId}),
+                    onSendProgress: (sent, total) {
+                      if (total != -1) {
+                        setState(() { _uploadProgress = sent / total; });
+                      }
+                    },
+                  );
                   
                   if (response.statusCode == 200) { 
                     if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ Video saved to Library!')));
                     _fetchLibrary(); 
                   } else { 
-                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Upload failed: ${response.body}'))); 
+                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Upload failed: ${response.statusCode}'))); 
                   }
-                } catch (e) { 
-                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Network Error: $e'))); 
+                } on DioException catch (e) { 
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Network Error: ${e.message}'))); 
                 }
-                setState(() => _isUploading = false);
+                setState(() { _isUploading = false; _uploadProgress = 0.0; });
               } else {
                 if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No video selected.')));
               }
@@ -308,7 +315,17 @@ jobs:
                   actions: [IconButton(icon: const Icon(Icons.refresh, color: Colors.tealAccent), onPressed: _fetchLibrary)]
                 ),
                 body: Column(children: [
-                  if (_isUploading) const LinearProgressIndicator(color: Colors.tealAccent),
+                  if (_isUploading) 
+                    Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        children: [
+                          Text('UPLOADING: ${(_uploadProgress * 100).toStringAsFixed(1)}%', style: const TextStyle(color: Colors.tealAccent, fontSize: 16, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 8),
+                          LinearProgressIndicator(value: _uploadProgress, color: Colors.tealAccent, backgroundColor: Colors.white10, minHeight: 8),
+                        ],
+                      ),
+                    ),
                   Expanded(
                     child: _isLoading 
                       ? const Center(child: CircularProgressIndicator(color: Colors.tealAccent)) 
