@@ -61,6 +61,7 @@ jobs:
             video_player: ^2.9.1
             webview_flutter: ^4.7.0
             file_picker: ^8.0.0
+            supabase_flutter: ^2.5.2
           dev_dependencies:
             flutter_test:
               sdk: flutter
@@ -94,10 +95,16 @@ jobs:
           import 'package:flutter/material.dart';
           import 'package:flutter/services.dart';
           import 'package:permission_handler/permission_handler.dart';
+          import 'package:supabase_flutter/supabase_flutter.dart';
+          import 'screens/auth_screen.dart';
           import 'screens/role_chooser.dart';
+
+          const String supabaseUrl = 'https://jhfbehlnthpvuvuknjlk.supabase.co';
+          const String supabaseKey = 'sb_publishable__mjT_JEYT1t1YPWmSOcDlw_5IcJe5s6';
 
           void main() async {
             WidgetsFlutterBinding.ensureInitialized();
+            await Supabase.initialize(url: supabaseUrl, anonKey: supabaseKey);
             await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp, DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
             await [Permission.camera, Permission.microphone, Permission.notification, Permission.storage, Permission.videos, Permission.photos].request();
             runApp(const App());
@@ -106,7 +113,44 @@ jobs:
             const App({super.key});
             @override
             Widget build(BuildContext context) {
-              return MaterialApp(debugShowCheckedModeBanner: false, title: 'abrimax', theme: ThemeData(useMaterial3: true, brightness: Brightness.dark, scaffoldBackgroundColor: const Color(0xFF0A0A0F)), home: const RoleChooser());
+              return MaterialApp(debugShowCheckedModeBanner: false, title: 'abrimax', theme: ThemeData(useMaterial3: true, brightness: Brightness.dark, scaffoldBackgroundColor: const Color(0xFF0A0A0F)), home: Supabase.instance.client.auth.currentSession == null ? const AuthScreen() : const RoleChooser());
+            }
+          }
+          D
+
+          # ─── lib/screens/auth_screen.dart ───
+          cat > lib/screens/auth_screen.dart << 'D'
+          import 'package:flutter/material.dart';
+          import 'package:supabase_flutter/supabase_flutter.dart';
+          import 'role_chooser.dart';
+
+          class AuthScreen extends StatefulWidget {
+            const AuthScreen({super.key});
+            @override State<AuthScreen> createState() => _AuthScreenState();
+          }
+          class _AuthScreenState extends State<AuthScreen> {
+            final _emailCtrl = TextEditingController();
+            final _passCtrl = TextEditingController();
+            bool _isLoading = false; bool _isLogin = true;
+
+            Future<void> _submit() async {
+              setState(() => _isLoading = true);
+              try {
+                if (_isLogin) { await Supabase.instance.client.auth.signInWithPassword(email: _emailCtrl.text.trim(), password: _passCtrl.text.trim()); } 
+                else { await Supabase.instance.client.auth.signUp(email: _emailCtrl.text.trim(), password: _passCtrl.text.trim()); }
+                if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const RoleChooser()));
+              } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}'))); }
+              setState(() => _isLoading = false);
+            }
+
+            @override Widget build(BuildContext context) {
+              return Scaffold(backgroundColor: const Color(0xFF0A0A0F), body: Center(child: SingleChildScrollView(padding: const EdgeInsets.all(24), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Text('ABRIMAX', style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, letterSpacing: 4, color: Colors.white)), const SizedBox(height: 40),
+                TextField(controller: _emailCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Email', labelStyle: TextStyle(color: Colors.white54), enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)))), const SizedBox(height: 16),
+                TextField(controller: _passCtrl, obscureText: true, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Password', labelStyle: TextStyle(color: Colors.white54), enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)))), const SizedBox(height: 32),
+                _isLoading ? const CircularProgressIndicator() : ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.tealAccent, minimumSize: const Size(double.infinity, 50)), onPressed: _submit, child: Text(_isLogin ? 'LOGIN' : 'SIGN UP', style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold))),
+                TextButton(onPressed: () => setState(() => _isLogin = !_isLogin), child: Text(_isLogin ? 'Need an account? Sign Up' : 'Already have an account? Login', style: const TextStyle(color: Colors.white54)))
+              ]))));
             }
           }
           D
@@ -171,7 +215,7 @@ jobs:
             }
             static Future<List<String>> detectUsbMics() async { try { final mics = await MicInfo.getWiredMicrophones(); return mics.map((m) => m.productName).toList(); } catch (_) { return []; } }
             static Future<void> startStreamToServer(String path, String serverIp) async {
-              if (_controller == null) return; final url = 'rtmp://$serverIp:1935/live/$path';
+              if (_controller == null) return; final url = 'rtmp://$serverIp:1935/$path';
               await _controller!.prepareForVideoRecording(); await _controller!.startVideoStreaming(url, bitrate: 2500 * 1024, androidUseOpenGL: false); _isStreaming = true;
             }
             static Future<void> stopStream() async { if (_controller == null) return; await _controller!.stopEverything(); _isStreaming = false; }
@@ -239,6 +283,7 @@ jobs:
           import 'package:dio/dio.dart';
           import 'package:http/http.dart' as http;
           import 'package:wakelock_plus/wakelock_plus.dart';
+          import 'package:supabase_flutter/supabase_flutter.dart';
           import 'dart:convert';
 
           class LibraryScreen extends StatefulWidget {
@@ -251,14 +296,14 @@ jobs:
             bool _isLoading = false;
             bool _isUploading = false;
             double _uploadProgress = 0.0;
-            String _userId = "edger_user";
 
             @override void initState() { super.initState(); _fetchLibrary(); }
 
             Future<void> _fetchLibrary() async {
               setState(() => _isLoading = true);
               try { 
-                final res = await http.get(Uri.parse('http://${widget.serverIp}:3000/library/$_userId')); 
+                final userId = Supabase.instance.client.auth.currentUser!.id;
+                final res = await http.get(Uri.parse('http://${widget.serverIp}:3000/library/$userId')); 
                 if (res.statusCode == 200) { setState(() => _videos = jsonDecode(res.body)); } 
               } catch (e) { 
                 debugPrint('Error: $e'); 
@@ -275,7 +320,6 @@ jobs:
                 final file = result.files.single.path!;
                 final fileName = result.files.single.name;
                 
-                // Keep screen awake so Android doesn't kill the upload
                 await WakelockPlus.enable();
 
                 Dio dio = Dio();
@@ -284,19 +328,17 @@ jobs:
                 });
 
                 try {
+                  final userId = Supabase.instance.client.auth.currentUser!.id;
                   var response = await dio.post(
                     'http://${widget.serverIp}:3000/upload-video',
                     data: formData,
                     options: Options(
-                      headers: {'x-user-id': _userId},
-                      // 10-minute timeout for huge videos processing on the server
+                      headers: {'x-user-id': userId},
                       sendTimeout: const Duration(minutes: 10),
                       receiveTimeout: const Duration(minutes: 10),
                     ),
                     onSendProgress: (sent, total) {
-                      if (total != -1) {
-                        setState(() { _uploadProgress = sent / total; });
-                      }
+                      if (total != -1) { setState(() { _uploadProgress = sent / total; }); }
                     },
                   );
                   
@@ -310,74 +352,24 @@ jobs:
                   if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Network Error: ${e.message}'))); 
                 }
                 
-                // Turn off wakelock and reset UI
                 await WakelockPlus.disable();
                 setState(() { _isUploading = false; _uploadProgress = 0.0; });
-              } else {
-                if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No video selected.')));
               }
             }
 
             @override Widget build(BuildContext context) {
               return Scaffold(
                 backgroundColor: const Color(0xFF0A0A0F),
-                appBar: AppBar(
-                  title: const Text('MY LIBRARY', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)), 
-                  backgroundColor: const Color(0xFF141418),
-                  actions: [IconButton(icon: const Icon(Icons.refresh, color: Colors.tealAccent), onPressed: _fetchLibrary)]
-                ),
+                appBar: AppBar(title: const Text('MY LIBRARY', style: TextStyle(fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.w900)), backgroundColor: const Color(0xFF141418), actions: [IconButton(icon: const Icon(Icons.refresh, color: Colors.tealAccent), onPressed: _fetchLibrary)]),
                 body: Column(children: [
-                  if (_isUploading) 
-                    Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        children: [
-                          Text('UPLOADING: ${(_uploadProgress * 100).toStringAsFixed(1)}%', style: const TextStyle(color: Colors.tealAccent, fontSize: 16, fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 8),
-                          LinearProgressIndicator(value: _uploadProgress, color: Colors.tealAccent, backgroundColor: Colors.white10, minHeight: 8),
-                        ],
-                      ),
-                    ),
-                  Expanded(
-                    child: _isLoading 
-                      ? const Center(child: CircularProgressIndicator(color: Colors.tealAccent)) 
-                      : _videos.isEmpty 
-                        ? const Center(child: Text('No videos found.\nUpload one to get started!', textAlign: TextAlign.center, style: TextStyle(color: Colors.white54))) 
-                        : ListView.builder(
-                            padding: const EdgeInsets.all(12), 
-                            itemCount: _videos.length, 
-                            itemBuilder: (ctx, i) { 
-                              final v = _videos[i]; 
-                              // Check if thumbnail base64 exists
-                              final hasThumb = v['thumbnail_base64'] != null && v['thumbnail_base64'].toString().isNotEmpty;
-                              
-                              return Card(
-                                color: const Color(0xFF141418), 
-                                child: ListTile(
-                                  leading: hasThumb 
-                                    ? ClipRRect(
-                                        borderRadius: BorderRadius.circular(4),
-                                        child: Image.memory(
-                                          base64Decode(v['thumbnail_base64'].split(',').last),
-                                          width: 60, height: 45, fit: BoxFit.cover,
-                                          errorBuilder: (c, e, s) => const Icon(Icons.video_file, color: Colors.tealAccent, size: 40),
-                                        ),
-                                      )
-                                    : const Icon(Icons.video_file, color: Colors.tealAccent, size: 40), 
-                                  title: Text(v['name'] ?? 'Unknown', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)), 
-                                  subtitle: const Text('In Cloud', style: TextStyle(color: Colors.white54, fontSize: 12))
-                                )
-                              ); 
-                            }
-                          )
-                  )
+                  if (_isUploading) Padding(padding: const EdgeInsets.all(16.0), child: Column(children: [Text('UPLOADING: ${(_uploadProgress * 100).toStringAsFixed(1)}%', style: const TextStyle(color: Colors.tealAccent, fontSize: 16, fontWeight: FontWeight.bold)), const SizedBox(height: 8), LinearProgressIndicator(value: _uploadProgress, color: Colors.tealAccent, backgroundColor: Colors.white10, minHeight: 8)])),
+                  Expanded(child: _isLoading ? const Center(child: CircularProgressIndicator(color: Colors.tealAccent)) : _videos.isEmpty ? const Center(child: Text('No videos found.\nUpload one to get started!', textAlign: TextAlign.center, style: TextStyle(color: Colors.white54))) : ListView.builder(padding: const EdgeInsets.all(12), itemCount: _videos.length, itemBuilder: (ctx, i) { 
+                    final v = _videos[i]; 
+                    final hasThumb = v['thumbnail_base64'] != null && v['thumbnail_base64'].toString().isNotEmpty;
+                    return Card(color: const Color(0xFF141418), child: ListTile(leading: hasThumb ? ClipRRect(borderRadius: BorderRadius.circular(4), child: Image.memory(base64Decode(v['thumbnail_base64'].split(',').last), width: 60, height: 45, fit: BoxFit.cover, errorBuilder: (c, e, s) => const Icon(Icons.video_file, color: Colors.tealAccent, size: 40))) : const Icon(Icons.video_file, color: Colors.tealAccent, size: 40), title: Text(v['name'] ?? 'Unknown', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)), subtitle: const Text('In Cloud', style: TextStyle(color: Colors.white54, fontSize: 12)))); 
+                  })),
                 ]),
-                floatingActionButton: FloatingActionButton.extended(
-                  onPressed: _isUploading ? null : () { _uploadVideo(); }, 
-                  backgroundColor: Colors.tealAccent, 
-                  icon: const Icon(Icons.upload, color: Colors.black), 
-                  label: const Text('UPLOAD', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold))
-                ),
+                floatingActionButton: FloatingActionButton.extended(onPressed: _isUploading ? null : () { _uploadVideo(); }, backgroundColor: Colors.tealAccent, icon: const Icon(Icons.upload, color: Colors.black), label: const Text('UPLOAD', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold))),
               );
             }
           }
@@ -523,6 +515,7 @@ jobs:
           import 'package:video_player/video_player.dart';
           import 'package:shared_preferences/shared_preferences.dart';
           import 'package:webview_flutter/webview_flutter.dart';
+          import 'package:supabase_flutter/supabase_flutter.dart';
           import '../models/overlay_item.dart'; import '../models/account_item.dart'; import '../services/overlay_store.dart'; import '../services/account_store.dart'; import '../widgets/overlay_renderer.dart'; import '../widgets/live_camera.dart'; import 'graphics_editor.dart'; import 'accounts_screen.dart'; import 'library_screen.dart';
           
           const _bg = Color(0xFF0A0A0F); const _panel = Color(0xFF141418); const _red = Color(0xFFEF4444); const _yellow = Color(0xFFF5C542); const _blue = Color(0xFF3B82F6); const _grey = Color(0x14FFFFFF);
@@ -560,7 +553,7 @@ jobs:
             Future<void> _take() async {
               final l = _live.indexOf(true); final p = _prev.indexOf(true); if (l < 0 || p < 0) return;
               setState(() { _live[l] = false; _prev[l] = true; _prev[p] = false; _live[p] = true; });
-              try { final response = await http.post(Uri.parse('http://$_serverIp:3000/switch-to-cam'), headers: {'Content-Type': 'application/json', 'x-user-id': 'edger_user'}, body: jsonEncode({'camPath': 'cam${p + 1}', 'platforms': ['rtmp://a.rtmp.youtube.com/live2/$_savedYtKey']})); if (response.statusCode == 200 && mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('TAKE Successful! cam${p+1} is live.'))); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Server Error: $e'))); }
+              try { final userId = Supabase.instance.client.auth.currentUser!.id; final response = await http.post(Uri.parse('http://$_serverIp:3000/switch-to-cam'), headers: {'Content-Type': 'application/json', 'x-user-id': userId}, body: jsonEncode({'camPath': 'cam${p + 1}', 'platforms': ['rtmp://a.rtmp.youtube.com/live2/$_savedYtKey']})); if (response.statusCode == 200 && mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('TAKE Successful! cam${p+1} is live.'))); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Server Error: $e'))); }
             }
             void _selPrev(int i) { setState(() { for (var k = 0; k < _camCount; k++) _prev[k] = false; _prev[i] = true; }); }
             void _setLive(int i) { setState(() { for (var k = 0; k < _camCount; k++) { _live[k] = false; _prev[k] = false; } _live[i] = true; }); }
@@ -605,9 +598,9 @@ jobs:
                    final camCtrl = TextEditingController(text: "1");
                    final camNum = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(backgroundColor: _panel, title: const Text('Switch to Live Camera', style: TextStyle(color: Colors.white)), content: TextField(controller: camCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Camera Number (1-15)', labelStyle: TextStyle(color: Colors.white54))), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(ctx, camCtrl.text), child: const Text('GO LIVE'))]));
                    if (camNum == null || camNum.isEmpty) return;
-                   try { final response = await http.post(Uri.parse('http://$_serverIp:3000/switch-to-cam'), headers: {'Content-Type': 'application/json', 'x-user-id': 'edger_user'}, body: jsonEncode({'camPath': 'cam$camNum', 'platforms': ['rtmp://a.rtmp.youtube.com/live2/$_savedYtKey']})); if (response.statusCode == 200 && mounted) setState(() => _isLiveMode = true); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); }
+                   try { final userId = Supabase.instance.client.auth.currentUser!.id; final response = await http.post(Uri.parse('http://$_serverIp:3000/switch-to-cam'), headers: {'Content-Type': 'application/json', 'x-user-id': userId}, body: jsonEncode({'camPath': 'cam$camNum', 'platforms': ['rtmp://a.rtmp.youtube.com/live2/$_savedYtKey']})); if (response.statusCode == 200 && mounted) setState(() => _isLiveMode = true); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); }
                } else {
-                   try { final response = await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule'), headers: {'x-user-id': 'edger_user'}); if (response.statusCode == 200 && mounted) setState(() => _isLiveMode = false); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); }
+                   try { final userId = Supabase.instance.client.auth.currentUser!.id; final response = await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule'), headers: {'x-user-id': userId}); if (response.statusCode == 200 && mounted) setState(() => _isLiveMode = false); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); }
                }
             }
             
@@ -616,7 +609,7 @@ jobs:
               final store = AccountStore(); final linkedAccounts = await store.loadAll();
               if (linkedAccounts.isEmpty) { linkedAccounts.add(AccountItem(id: 'default', platform: 'YouTube', name: 'Default YouTube', streamKey: _savedYtKey, rtmpUrl: '')); }
               Map<String, bool> activePlatforms = {}; for (var acc in linkedAccounts) { activePlatforms[acc.id] = true; }
-              List<dynamic> library = []; try { final res = await http.get(Uri.parse('http://$_serverIp:3000/library/edger_user')); if (res.statusCode == 200) library = jsonDecode(res.body); } catch (e) { debugPrint('Error fetching library: $e'); }
+              List<dynamic> library = []; try { final userId = Supabase.instance.client.auth.currentUser!.id; final res = await http.get(Uri.parse('http://$_serverIp:3000/library/$userId')); if (res.statusCode == 200) library = jsonDecode(res.body); } catch (e) { debugPrint('Error fetching library: $e'); }
               String? selectedVideoId; String? selectedVideoName;
               final result = await showDialog<String>(context: context, builder: (ctx) => StatefulBuilder(builder: (context, setDialogState) {
                 return AlertDialog(backgroundColor: _panel, title: const Text('Select Video from Library', style: TextStyle(color: Colors.white, fontSize: 16)), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -625,13 +618,14 @@ jobs:
                   const SizedBox(height: 12),
                   const Text('Broadcast To:', style: TextStyle(color: Colors.tealAccent, fontSize: 12, fontWeight: FontWeight.bold)), const SizedBox(height: 8),
                   ...linkedAccounts.map((acc) { return CheckboxListTile(title: Text('${acc.platform} (${acc.name})', style: const TextStyle(color: Colors.white, fontSize: 12)), value: activePlatforms[acc.id], activeColor: Colors.tealAccent, contentPadding: EdgeInsets.zero, onChanged: (val) { setDialogState(() => activePlatforms[acc.id] = val ?? false); }); }).toList(),
-                ])), actions: [TextButton(onPressed: () async { await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule'), headers: {'x-user-id': 'edger_user'}); if (ctx.mounted) Navigator.pop(ctx); }, child: const Text('STOP LIVE', style: TextStyle(color: Colors.red))), FilledButton(onPressed: () { if (selectedVideoId == null) return; Navigator.pop(ctx, 'ADD'); }, child: const Text('PLAY NOW'))]);
+                ])), actions: [TextButton(onPressed: () async { final userId = Supabase.instance.client.auth.currentUser!.id; await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule'), headers: {'x-user-id': userId}); if (ctx.mounted) Navigator.pop(ctx); }, child: const Text('STOP LIVE', style: TextStyle(color: Colors.red))), FilledButton(onPressed: () { if (selectedVideoId == null) return; Navigator.pop(ctx, 'ADD'); }, child: const Text('PLAY NOW'))]);
               }));
               if (result == 'ADD' && selectedVideoId != null) {
                 final List<String> selectedKeys = []; for (var acc in linkedAccounts) { if (activePlatforms[acc.id] == true) { if (acc.platform == 'YouTube' && acc.rtmpUrl.isEmpty) { selectedKeys.add(acc.streamKey); } else { selectedKeys.add('${acc.rtmpUrl}/${acc.streamKey}'); } } }
                 if (selectedKeys.isEmpty) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select at least one platform.'))); return; }
                 try {
-                  final response = await http.post(Uri.parse('http://$_serverIp:3000/play-now'), headers: {'Content-Type': 'application/json', 'x-user-id': 'edger_user'}, body: jsonEncode({'video': {'telegram_message_id': selectedVideoId, 'name': selectedVideoName}, 'platforms': selectedKeys}));
+                  final userId = Supabase.instance.client.auth.currentUser!.id;
+                  final response = await http.post(Uri.parse('http://$_serverIp:3000/play-now'), headers: {'Content-Type': 'application/json', 'x-user-id': userId}, body: jsonEncode({'video': {'telegram_message_id': selectedVideoId, 'name': selectedVideoName}, 'platforms': selectedKeys}));
                   if (mounted) { setState(() => _onAir = true); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Playing from Library!'))); }
                 } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to connect: $e'))); }
               }
@@ -640,7 +634,7 @@ jobs:
             Future<void> _scheduleTimedVideo() async {
               if (_savedYtKey.isEmpty) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please set your Stream Settings first!'))); _openStreamSettings(); return; }
               TimeOfDay? pickedTime;
-              List<dynamic> library = []; try { final res = await http.get(Uri.parse('http://$_serverIp:3000/library/edger_user')); if (res.statusCode == 200) library = jsonDecode(res.body); } catch (e) { debugPrint('Error fetching library: $e'); }
+              List<dynamic> library = []; try { final userId = Supabase.instance.client.auth.currentUser!.id; final res = await http.get(Uri.parse('http://$_serverIp:3000/library/$userId')); if (res.statusCode == 200) library = jsonDecode(res.body); } catch (e) { debugPrint('Error fetching library: $e'); }
               String? selectedVideoId; String? selectedVideoName;
               final result = await showDialog<String>(context: context, builder: (ctx) => StatefulBuilder(builder: (context, setDialogState) {
                 return AlertDialog(backgroundColor: _panel, title: const Text('Schedule Video at Exact Time', style: TextStyle(color: Colors.white, fontSize: 16)), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -653,7 +647,8 @@ jobs:
               if (result == 'SCHEDULE' && pickedTime != null && selectedVideoId != null) {
                 final hour = pickedTime!.hour.toString().padLeft(2, '0'); final minute = pickedTime!.minute.toString().padLeft(2, '0'); final timeString = "$hour:$minute";
                 try {
-                  final response = await http.post(Uri.parse('http://$_serverIp:3000/schedule-time'), headers: {'Content-Type': 'application/json', 'x-user-id': 'edger_user'}, body: jsonEncode({'time': timeString, 'videoId': selectedVideoId, 'videoName': selectedVideoName, 'platforms': ['rtmp://a.rtmp.youtube.com/live2/$_savedYtKey']}));
+                  final userId = Supabase.instance.client.auth.currentUser!.id;
+                  final response = await http.post(Uri.parse('http://$_serverIp:3000/schedule-time'), headers: {'Content-Type': 'application/json', 'x-user-id': userId}, body: jsonEncode({'time': timeString, 'videoId': selectedVideoId, 'videoName': selectedVideoName, 'platforms': ['rtmp://a.rtmp.youtube.com/live2/$_savedYtKey']}));
                   if (response.statusCode == 200 && mounted) { final msg = jsonDecode(response.body)['message'] ?? 'Video scheduled'; ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg))); }
                 } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to connect: $e'))); }
               }
@@ -676,7 +671,7 @@ jobs:
             
             Widget _bar() { 
               return Container(height: 48, color: _bg, padding: const EdgeInsets.symmetric(horizontal: 10), child: Row(children: [ 
-                GestureDetector(onTap: () async { if (_onAir) { try { await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule'), headers: {'x-user-id': 'edger_user'}); setState(() => _onAir = false); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); } } else { setState(() => _menuOpen = true); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Use "Play from Library" to go live!'))); } }, child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 14), decoration: BoxDecoration(color: _onAir ? _red : const Color(0xFF1E293B), borderRadius: BorderRadius.circular(5)), child: Row(children: [Icon(_onAir ? Icons.stop_circle : Icons.podcasts, color: Colors.white, size: 16), const SizedBox(width: 6), Text(_onAir ? 'END STREAM' : 'GO LIVE', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.2))])) ), 
+                GestureDetector(onTap: () async { if (_onAir) { try { final userId = Supabase.instance.client.auth.currentUser!.id; await http.post(Uri.parse('http://$_serverIp:3000/stop-schedule'), headers: {'x-user-id': userId}); setState(() => _onAir = false); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); } } else { setState(() => _menuOpen = true); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Use "Play from Library" to go live!'))); } }, child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 14), decoration: BoxDecoration(color: _onAir ? _red : const Color(0xFF1E293B), borderRadius: BorderRadius.circular(5)), child: Row(children: [Icon(_onAir ? Icons.stop_circle : Icons.podcasts, color: Colors.white, size: 16), const SizedBox(width: 6), Text(_onAir ? 'END STREAM' : 'GO LIVE', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.2))])) ), 
                 const SizedBox(width: 8), 
                 GestureDetector(onTap: () => setState(() => _showLiveCamera = !_showLiveCamera), child: Container(height: 36, padding: const EdgeInsets.symmetric(horizontal: 10), decoration: BoxDecoration(color: _showLiveCamera ? _blue.withOpacity(0.3) : Colors.white10, borderRadius: BorderRadius.circular(5), border: Border.all(color: _showLiveCamera ? _blue : Colors.white24)), child: Row(children: [Icon(_showLiveCamera ? Icons.videocam : Icons.videocam_off, color: _showLiveCamera ? _blue : Colors.white54, size: 14), const SizedBox(width: 4), Text('LIVE CAM', style: TextStyle(color: _showLiveCamera ? _blue : Colors.white54, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1))]))), 
                 const SizedBox(width: 8), 
@@ -709,7 +704,7 @@ jobs:
           class _CameraStreamState extends State<_CameraStream> {
             VideoPlayerController? _controller; bool _hasError = false;
             @override void initState() { super.initState(); _initPlayer(); }
-            Future<void> _initPlayer() async { final url = Uri.parse("http://${widget.serverIp}:8888/live/cam${widget.cameraNumber}/index.m3u8"); _controller = VideoPlayerController.networkUrl(url); try { await _controller!.initialize(); _controller!.setLooping(true); _controller!.setVolume(0); _controller!.play(); if (mounted) setState(() {}); } catch (e) { if (mounted) setState(() => _hasError = true); } }
+            Future<void> _initPlayer() async { final url = Uri.parse("http://${widget.serverIp}:8888/cam${widget.cameraNumber}/index.m3u8"); _controller = VideoPlayerController.networkUrl(url); try { await _controller!.initialize(); _controller!.setLooping(true); _controller!.setVolume(0); _controller!.play(); if (mounted) setState(() {}); } catch (e) { if (mounted) setState(() => _hasError = true); } }
             @override void dispose() { _controller?.dispose(); super.dispose(); }
             @override Widget build(BuildContext context) { if (_hasError) { return const Center(child: Text('OFFLINE', style: TextStyle(color: Colors.white24, fontSize: 10))); } if (_controller == null || !_controller!.value.isInitialized) { return const Center(child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white24)); } return SizedBox.expand(child: FittedBox(fit: BoxFit.cover, child: SizedBox(width: _controller!.value.size.width, height: _controller!.value.size.height, child: VideoPlayer(_controller!)))); }
           }
