@@ -238,6 +238,7 @@ jobs:
           import 'package:file_picker/file_picker.dart';
           import 'package:dio/dio.dart';
           import 'package:http/http.dart' as http;
+          import 'package:wakelock_plus/wakelock_plus.dart';
           import 'dart:convert';
 
           class LibraryScreen extends StatefulWidget {
@@ -274,6 +275,9 @@ jobs:
                 final file = result.files.single.path!;
                 final fileName = result.files.single.name;
                 
+                // Keep screen awake so Android doesn't kill the upload
+                await WakelockPlus.enable();
+
                 Dio dio = Dio();
                 FormData formData = FormData.fromMap({
                   'video': await MultipartFile.fromFile(file, filename: fileName),
@@ -283,7 +287,12 @@ jobs:
                   var response = await dio.post(
                     'http://${widget.serverIp}:3000/upload-video',
                     data: formData,
-                    options: Options(headers: {'x-user-id': _userId}),
+                    options: Options(
+                      headers: {'x-user-id': _userId},
+                      // 10-minute timeout for huge videos processing on the server
+                      sendTimeout: const Duration(minutes: 10),
+                      receiveTimeout: const Duration(minutes: 10),
+                    ),
                     onSendProgress: (sent, total) {
                       if (total != -1) {
                         setState(() { _uploadProgress = sent / total; });
@@ -300,6 +309,9 @@ jobs:
                 } on DioException catch (e) { 
                   if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Network Error: ${e.message}'))); 
                 }
+                
+                // Turn off wakelock and reset UI
+                await WakelockPlus.disable();
                 setState(() { _isUploading = false; _uploadProgress = 0.0; });
               } else {
                 if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No video selected.')));
@@ -336,11 +348,23 @@ jobs:
                             itemCount: _videos.length, 
                             itemBuilder: (ctx, i) { 
                               final v = _videos[i]; 
+                              // Check if thumbnail base64 exists
+                              final hasThumb = v['thumbnail_base64'] != null && v['thumbnail_base64'].toString().isNotEmpty;
+                              
                               return Card(
                                 color: const Color(0xFF141418), 
                                 child: ListTile(
-                                  leading: const Icon(Icons.video_file, color: Colors.tealAccent), 
-                                  title: Text(v['name'] ?? 'Unknown', style: const TextStyle(color: Colors.white)), 
+                                  leading: hasThumb 
+                                    ? ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Image.memory(
+                                          base64Decode(v['thumbnail_base64'].split(',').last),
+                                          width: 60, height: 45, fit: BoxFit.cover,
+                                          errorBuilder: (c, e, s) => const Icon(Icons.video_file, color: Colors.tealAccent, size: 40),
+                                        ),
+                                      )
+                                    : const Icon(Icons.video_file, color: Colors.tealAccent, size: 40), 
+                                  title: Text(v['name'] ?? 'Unknown', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)), 
                                   subtitle: const Text('In Cloud', style: TextStyle(color: Colors.white54, fontSize: 12))
                                 )
                               ); 
@@ -490,7 +514,7 @@ jobs:
           }
           D
 
-          # ─── lib/screens/director_screen.dart (MODIFIED) ───
+          # ─── lib/screens/director_screen.dart ───
           cat > lib/screens/director_screen.dart << 'D'
           import 'dart:async';
           import 'dart:convert';
