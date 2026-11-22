@@ -281,7 +281,7 @@ jobs:
           import 'package:flutter/material.dart';
           import 'package:file_picker/file_picker.dart';
           import 'package:dio/dio.dart';
-          import 'package:http/http.dart' as http;
+          import 'package:http/http.dart' as http hide MultipartFile; // <-- 修复点：隐藏 http 的 MultipartFile
           import 'package:wakelock_plus/wakelock_plus.dart';
           import 'package:supabase_flutter/supabase_flutter.dart';
           import 'dart:convert';
